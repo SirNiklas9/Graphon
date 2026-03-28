@@ -108,24 +108,27 @@ main :: proc() {
 		// Update mouse
 		mouse_update(&mouse, &grid)
 		// Font size adjustment
-		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer, ls: ^LayerStack, gg_ptr: ^GPUGrid, cp_ptr: ^ComputePipeline) {
+		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer, ls: ^LayerStack, gg_ptr: ^GPUGrid, cp_ptr: ^ComputePipeline, render_path: RenderPath) {
 			resize_font(grid, font, new_size, demo_mode, palette, blend, patterns)
-			depth_buffer_resize(db, grid.cols, grid.rows)
-			layer_stack_resize(ls, grid.cols, grid.rows)
+			// Only resize heavy CPU buffers when not in GPU-only mode
+			if render_path != .GPU || grid.cols * grid.rows < 500000 {
+				depth_buffer_resize(db, grid.cols, grid.rows)
+				layer_stack_resize(ls, grid.cols, grid.rows)
+			}
 			gpu_grid_resize(gg_ptr, grid.cols, grid.rows)
 			compute_resize(cp_ptr, grid.cols, grid.rows)
 		}
 		if rl.IsKeyPressed(.UP) {
-			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp)
+			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path)
 		}
 		if rl.IsKeyPressed(.DOWN) {
-			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp)
+			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path)
 		}
 		if rl.IsKeyPressed(.LEFT) {
-			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp)
+			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path)
 		}
 		if rl.IsKeyPressed(.RIGHT) {
-			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp)
+			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path)
 		}
 
 		// Cycle demo mode: 0=random, 1=solver, 2=primitives, 3=3D, 4=layers, 5=compute
@@ -136,39 +139,26 @@ main :: proc() {
 			}
 		}
 
-		// 3D mode: update camera and re-render every frame
+		// Global time — always advances
+		dt := rl.GetFrameTime()
+		time += dt
+
+		// Camera always updates in 3D mode (used by both CPU and GPU paths)
 		if demo_mode == 3 {
-			dt := rl.GetFrameTime()
-			time += dt
 			camera_update(&cam, dt)
-			fill_3d_demo(&grid, &db, &cam, &palette, &scene_lights, time)
 		}
 
-		// Layers mode: composited every frame
-		if demo_mode == 4 {
-			time += rl.GetFrameTime()
-			fill_layers_demo(&grid, &ls, &palette, time)
-		}
-
-		// Compute mode: GPU-generated scene
-		if demo_mode == 5 {
-			time += rl.GetFrameTime()
-			compute_run(&cp, time, &grid)
-		}
-
-		// GPU render path: run compute shader to fill buffer on GPU
-		if render_path == .GPU {
-			if demo_mode == 0 {
-				cp.active_mode = .Random
-				compute_run(&cp, time, &grid)
-			} else if demo_mode == 5 {
-				compute_run(&cp, time, &grid)
+		// GPU path: compute shader handles everything, skip CPU fill
+		if render_path == .GPU && cp.enabled {
+			compute_run(&cp, demo_mode, time, &grid, int(demo_blend), &cam)
+		} else {
+			// CPU/Hybrid path: CPU fills the grid buffer
+			if demo_mode == 3 {
+				fill_3d_demo(&grid, &db, &cam, &palette, &scene_lights, time)
 			}
-		}
-
-		// Cycle compute sub-mode with G
-		if demo_mode == 5 && rl.IsKeyPressed(.G) {
-			compute_cycle_mode(&cp)
+			if demo_mode == 4 {
+				fill_layers_demo(&grid, &ls, &palette, time)
+			}
 		}
 
 		// Cycle blend mode in solver demo
@@ -205,6 +195,15 @@ main :: proc() {
 		if rl.IsKeyPressed(.F2) { cfg.show_cell_coords = !cfg.show_cell_coords }
 		if rl.IsKeyPressed(.F3) && demo_mode == 3 { cfg.show_depth = !cfg.show_depth }
 		if rl.IsKeyPressed(.F4) { gpu_cycle_fx(&gpu) }
+		if rl.IsKeyPressed(.F7) {
+			grid.forced_fidelity = !grid.forced_fidelity
+			if !grid.forced_fidelity {
+				grid.fidelity = fidelity_from_cell_size(grid.cell_w)
+			}
+		}
+		if rl.IsKeyPressed(.F8) && grid.forced_fidelity {
+			grid.fidelity = Fidelity((int(grid.fidelity) + 1) % 5)
+		}
 		if rl.IsKeyPressed(.F6) { render_path = RenderPath((int(render_path) + 1) % RENDER_PATH_COUNT) }
 		if rl.IsKeyPressed(.F12) { export_screenshot() }
 
@@ -240,8 +239,7 @@ main :: proc() {
 			gpu_grid_upload(&gg, &grid)
 			gpu_grid_render(&gg, &grid, font)
 		case .GPU:
-			has_compute := (demo_mode == 0 || demo_mode == 5) && cp.enabled
-			if has_compute {
+			if cp.enabled {
 				compute_render_direct(&cp, &grid)
 			} else {
 				gpu_grid_upload(&gg, &grid)
@@ -335,8 +333,15 @@ main :: proc() {
 			imgui.Text(cstring(raw_data(ren_buf[:])))
 
 			imgui.Separator()
+			fid_forced: cstring = grid.forced_fidelity ? "FORCED" : "auto"
+			ff_buf: [32]u8
+			fmt.bprintf(ff_buf[:], "Fidelity: %s\x00", fid_forced)
+			imgui.Text(cstring(raw_data(ff_buf[:])))
+
 			imgui.Text("F1:Grid F2:Coords F3:Depth")
-			imgui.Text("F4:PostFX F5:Save F6:GPU F12:Screenshot")
+			imgui.Text("F4:PostFX F5:Save F6:Renderer")
+			imgui.Text("F7:ForceFidelity F8:CycleFidelity")
+			imgui.Text("F12:Screenshot")
 		}
 		imgui.End()
 
@@ -353,7 +358,7 @@ load_font :: proc(size: i32) -> rl.Font {
 }
 
 resize_font :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int = 0, palette: ^Palette = nil, blend: BlendMode = .Normal, patterns: ^PatternLib = nil) {
-	size := clamp(new_size, 2, 64)
+	size := clamp(new_size, 1, 64)
 	rl.UnloadFont(font^)
 	font^ = load_font(size)
 	grid_resize(grid, i32(rl.GetScreenWidth()), i32(rl.GetScreenHeight()), font^, size)

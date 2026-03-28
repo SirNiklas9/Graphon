@@ -22,8 +22,8 @@ vec3 hashColor(vec2 p, float seed) {
 }
 
 void main() {
-    // Each pixel = one cell
-    vec2 cellCoord = floor(fragTexCoord * gridSize);
+    vec2 tc = vec2(fragTexCoord.x, 1.0 - fragTexCoord.y);
+    vec2 cellCoord = floor(tc * gridSize);
 
     // Generate random color per cell, changes with time on SPACE press
     vec3 fg = hashColor(cellCoord, floor(time));

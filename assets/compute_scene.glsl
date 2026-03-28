@@ -26,7 +26,8 @@ float sdCircle(vec2 p, float r) {
 }
 
 void main() {
-    vec2 cellCoord = floor(fragTexCoord * gridSize);
+    vec2 tc = vec2(fragTexCoord.x, 1.0 - fragTexCoord.y);
+    vec2 cellCoord = floor(tc * gridSize);
     vec2 uv = cellCoord / gridSize;  // 0-1 normalized
 
     // Center UV
