@@ -26,31 +26,57 @@ main :: proc() {
 	font := load_font(INIT_FONT_SZ)
 	defer rl.UnloadFont(font)
 
+	palette := palette_create()
+	defer palette_destroy(&palette)
+	palette_default(&palette)
+
 	grid: Grid
 	grid_init(&grid, SCREEN_W, SCREEN_H, font, INIT_FONT_SZ)
 	defer grid_destroy(&grid)
+
+	demo_mode := false
+	demo_blend := BlendMode.Normal
 
 	randomize_grid(&grid)
 
 	for !rl.WindowShouldClose() {
 		// Font size adjustment
 		if rl.IsKeyPressed(.UP) {
-			resize_font(&grid, &font, grid.font_size + 2)
+			resize_font(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend)
 		}
 		if rl.IsKeyPressed(.DOWN) {
-			resize_font(&grid, &font, grid.font_size - 2)
+			resize_font(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend)
 		}
-		// Allow going below 6px to see FULL_ONLY mode
 		if rl.IsKeyPressed(.LEFT) {
-			resize_font(&grid, &font, grid.font_size - 1)
+			resize_font(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend)
 		}
 		if rl.IsKeyPressed(.RIGHT) {
-			resize_font(&grid, &font, grid.font_size + 1)
+			resize_font(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend)
+		}
+
+		// Toggle demo mode
+		if rl.IsKeyPressed(.TAB) {
+			demo_mode = !demo_mode
+			if demo_mode {
+				fill_solver_demo(&grid, &palette, demo_blend)
+			} else {
+				randomize_grid(&grid)
+			}
+		}
+
+		// Cycle blend mode in demo
+		if demo_mode && rl.IsKeyPressed(.B) {
+			demo_blend = BlendMode((int(demo_blend) + 1) % 4)
+			fill_solver_demo(&grid, &palette, demo_blend)
 		}
 
 		// Re-randomize on SPACE
 		if rl.IsKeyPressed(.SPACE) {
-			randomize_grid(&grid)
+			if demo_mode {
+				fill_solver_demo(&grid, &palette, demo_blend)
+			} else {
+				randomize_grid(&grid)
+			}
 		}
 
 		rl.BeginDrawing()
@@ -87,6 +113,24 @@ main :: proc() {
 			fid_buf: [48]u8
 			fmt.bprintf(fid_buf[:], "Fidelity: %s\x00", fidelity_names[grid.fidelity])
 			imgui.Text(cstring(raw_data(fid_buf[:])))
+
+			imgui.Separator()
+			mode_str: cstring = demo_mode ? "Solver Demo" : "Random"
+			mode_buf: [32]u8
+			fmt.bprintf(mode_buf[:], "Mode: %s\x00", mode_str)
+			imgui.Text(cstring(raw_data(mode_buf[:])))
+
+			if demo_mode {
+				blend_names := [BlendMode]cstring{
+					.Normal   = "Normal",
+					.Alpha    = "Alpha",
+					.Additive = "Additive",
+					.Multiply = "Multiply",
+				}
+				bl_buf: [32]u8
+				fmt.bprintf(bl_buf[:], "Blend: %s\x00", blend_names[demo_blend])
+				imgui.Text(cstring(raw_data(bl_buf[:])))
+			}
 		}
 		imgui.End()
 
@@ -102,12 +146,16 @@ load_font :: proc(size: i32) -> rl.Font {
 	return font
 }
 
-resize_font :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32) {
+resize_font :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: bool = false, palette: ^Palette = nil, blend: BlendMode = .Normal) {
 	size := clamp(new_size, 4, 64)
 	rl.UnloadFont(font^)
 	font^ = load_font(size)
 	grid_resize(grid, i32(rl.GetScreenWidth()), i32(rl.GetScreenHeight()), font^, size)
-	randomize_grid(grid)
+	if demo_mode && palette != nil {
+		fill_solver_demo(grid, palette, blend)
+	} else {
+		randomize_grid(grid)
+	}
 }
 
 randomize_grid :: proc(grid: ^Grid) {
@@ -144,6 +192,22 @@ randomize_grid :: proc(grid: ^Grid) {
 			char = pool[rand.uint32() % pool_len],
 			fg   = {u8(rand.uint32() % 256), u8(rand.uint32() % 256), u8(rand.uint32() % 256), 255},
 			bg   = {u8(rand.uint32() % 256), u8(rand.uint32() % 256), u8(rand.uint32() % 256), 255},
+		}
+	}
+}
+
+// Solver demo: horizontal opacity gradient using palette colors, one row per color
+fill_solver_demo :: proc(grid: ^Grid, palette: ^Palette, blend: BlendMode) {
+	bg := palette_get(palette, "dark")
+	colors := [7]string{"red", "green", "blue", "cyan", "magenta", "yellow", "orange"}
+
+	for row in 0 ..< grid.rows {
+		color_name := colors[row % len(colors)]
+		fg := palette_get(palette, color_name)
+
+		for col in 0 ..< grid.cols {
+			opacity := f32(col) / f32(max(grid.cols - 1, 1))
+			grid_set(grid, col, row, solve_cell(fg, opacity, bg, blend))
 		}
 	}
 }
