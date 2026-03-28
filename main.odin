@@ -76,9 +76,14 @@ main :: proc() {
 
 	cfg := config_default()
 
-	// GPU pipeline
+	// GPU pipeline (post-process)
 	gpu := gpu_create(SCREEN_W, SCREEN_H)
 	defer gpu_destroy(&gpu)
+
+	// GPU grid renderer (true one-draw-call)
+	gg := gpu_grid_create(grid.cols, grid.rows)
+	defer gpu_grid_destroy(&gg)
+	use_gpu_grid := false
 
 	mouse: Mouse
 	show_cursor := true
@@ -90,22 +95,23 @@ main :: proc() {
 		// Update mouse
 		mouse_update(&mouse, &grid)
 		// Font size adjustment
-		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer, ls: ^LayerStack) {
+		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer, ls: ^LayerStack, gg_ptr: ^GPUGrid) {
 			resize_font(grid, font, new_size, demo_mode, palette, blend, patterns)
 			depth_buffer_resize(db, grid.cols, grid.rows)
 			layer_stack_resize(ls, grid.cols, grid.rows)
+			gpu_grid_resize(gg_ptr, grid.cols, grid.rows)
 		}
 		if rl.IsKeyPressed(.UP) {
-			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls)
+			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg)
 		}
 		if rl.IsKeyPressed(.DOWN) {
-			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls)
+			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg)
 		}
 		if rl.IsKeyPressed(.LEFT) {
-			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls)
+			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg)
 		}
 		if rl.IsKeyPressed(.RIGHT) {
-			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls)
+			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg)
 		}
 
 		// Cycle demo mode: 0=random, 1=solver, 2=primitives, 3=3D, 4=layers
@@ -164,6 +170,7 @@ main :: proc() {
 		if rl.IsKeyPressed(.F2) { cfg.show_cell_coords = !cfg.show_cell_coords }
 		if rl.IsKeyPressed(.F3) && demo_mode == 3 { cfg.show_depth = !cfg.show_depth }
 		if rl.IsKeyPressed(.F4) { gpu_cycle_fx(&gpu) }
+		if rl.IsKeyPressed(.F6) { use_gpu_grid = !use_gpu_grid }
 		if rl.IsKeyPressed(.F12) { export_screenshot() }
 
 		// Save current scene
@@ -183,7 +190,12 @@ main :: proc() {
 		}
 
 		gpu_begin(&gpu)
-		render_grid(&grid, font)
+		if use_gpu_grid && gg.enabled {
+			gpu_grid_upload(&gg, &grid)
+			gpu_grid_render(&gg, &grid, font)
+		} else {
+			render_grid(&grid, font)
+		}
 		if cfg.show_grid_lines { debug_grid_lines(&grid) }
 		if cfg.show_cell_coords { debug_cell_coords(&grid, font) }
 		gpu_end(&gpu)
@@ -259,9 +271,14 @@ main :: proc() {
 			fmt.bprintf(fx_buf[:], "PostFX: %s\x00", fx_names[gpu.active_fx])
 			imgui.Text(cstring(raw_data(fx_buf[:])))
 
+			renderer_str: cstring = use_gpu_grid ? "GPU (1 draw)" : "CPU"
+			ren_buf: [32]u8
+			fmt.bprintf(ren_buf[:], "Renderer: %s\x00", renderer_str)
+			imgui.Text(cstring(raw_data(ren_buf[:])))
+
 			imgui.Separator()
 			imgui.Text("F1:Grid F2:Coords F3:Depth")
-			imgui.Text("F4:PostFX F5:Save F12:Screenshot")
+			imgui.Text("F4:PostFX F5:Save F6:GPU F12:Screenshot")
 		}
 		imgui.End()
 
@@ -278,7 +295,7 @@ load_font :: proc(size: i32) -> rl.Font {
 }
 
 resize_font :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int = 0, palette: ^Palette = nil, blend: BlendMode = .Normal, patterns: ^PatternLib = nil) {
-	size := clamp(new_size, 4, 64)
+	size := clamp(new_size, 2, 64)
 	rl.UnloadFont(font^)
 	font^ = load_font(size)
 	grid_resize(grid, i32(rl.GetScreenWidth()), i32(rl.GetScreenHeight()), font^, size)

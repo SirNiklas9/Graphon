@@ -29,6 +29,8 @@ mouse_update :: proc(mouse: ^Mouse, grid: ^Grid) {
 
 	mouse.col = int(pos.x / grid.cell_w)
 	mouse.row = int(pos.y / grid.cell_h)
+	mouse.col = clamp(mouse.col, 0, max(grid.cols - 1, 0))
+	mouse.row = clamp(mouse.row, 0, max(grid.rows - 1, 0))
 	mouse.in_bounds = mouse.col >= 0 && mouse.col < grid.cols && mouse.row >= 0 && mouse.row < grid.rows
 
 	mouse.left = rl.IsMouseButtonDown(.LEFT)
