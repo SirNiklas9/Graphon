@@ -16,7 +16,7 @@ FONT_PATH    :: "assets/JetBrainsMonoNLNerdFont-Regular.ttf"
 main :: proc() {
 	rl.InitWindow(SCREEN_W, SCREEN_H, "Graphon")
 	defer rl.CloseWindow()
-	rl.SetTargetFPS(60)
+	rl.SetTargetFPS(0) // uncapped — see true performance
 
 	// ImGui setup
 	imgui.CreateContext(nil)
@@ -62,6 +62,10 @@ main :: proc() {
 	ls := layer_stack_create(grid.cols, grid.rows)
 	defer layer_stack_destroy(&ls)
 
+	// Compute pipeline (GPU-generated scenes)
+	cp := compute_create(grid.cols, grid.rows)
+	defer compute_destroy(&cp)
+
 	// 3D state
 	cam := camera_create({0, 5, 12}, {0, 0, 0})
 	db := depth_buffer_create(grid.cols, grid.rows)
@@ -95,29 +99,30 @@ main :: proc() {
 		// Update mouse
 		mouse_update(&mouse, &grid)
 		// Font size adjustment
-		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer, ls: ^LayerStack, gg_ptr: ^GPUGrid) {
+		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer, ls: ^LayerStack, gg_ptr: ^GPUGrid, cp_ptr: ^ComputePipeline) {
 			resize_font(grid, font, new_size, demo_mode, palette, blend, patterns)
 			depth_buffer_resize(db, grid.cols, grid.rows)
 			layer_stack_resize(ls, grid.cols, grid.rows)
 			gpu_grid_resize(gg_ptr, grid.cols, grid.rows)
+			compute_resize(cp_ptr, grid.cols, grid.rows)
 		}
 		if rl.IsKeyPressed(.UP) {
-			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg)
+			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp)
 		}
 		if rl.IsKeyPressed(.DOWN) {
-			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg)
+			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp)
 		}
 		if rl.IsKeyPressed(.LEFT) {
-			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg)
+			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp)
 		}
 		if rl.IsKeyPressed(.RIGHT) {
-			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg)
+			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp)
 		}
 
-		// Cycle demo mode: 0=random, 1=solver, 2=primitives, 3=3D, 4=layers
+		// Cycle demo mode: 0=random, 1=solver, 2=primitives, 3=3D, 4=layers, 5=compute
 		if rl.IsKeyPressed(.TAB) {
-			demo_mode = (demo_mode + 1) % 5
-			if demo_mode != 3 && demo_mode != 4 {
+			demo_mode = (demo_mode + 1) % 6
+			if demo_mode != 3 && demo_mode != 4 && demo_mode != 5 {
 				refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
 			}
 		}
@@ -134,6 +139,17 @@ main :: proc() {
 		if demo_mode == 4 {
 			time += rl.GetFrameTime()
 			fill_layers_demo(&grid, &ls, &palette, time)
+		}
+
+		// Compute mode: GPU-generated scene
+		if demo_mode == 5 {
+			time += rl.GetFrameTime()
+			compute_run(&cp, time, &grid)
+		}
+
+		// Cycle compute sub-mode with G
+		if demo_mode == 5 && rl.IsKeyPressed(.G) {
+			compute_cycle_mode(&cp)
 		}
 
 		// Cycle blend mode in solver demo
@@ -198,7 +214,10 @@ main :: proc() {
 			rl.ClearBackground(rl.BLACK)
 		}
 
-		if use_gpu_grid && gg.enabled {
+		if demo_mode == 5 && cp.enabled {
+			// Compute mode: render GPU texture directly — zero CPU
+			compute_render_direct(&cp, &grid)
+		} else if use_gpu_grid && gg.enabled {
 			gpu_grid_upload(&gg, &grid)
 			gpu_grid_render(&gg, &grid, font)
 		} else {
@@ -248,7 +267,7 @@ main :: proc() {
 			imgui.Text(cstring(raw_data(fid_buf[:])))
 
 			imgui.Separator()
-			mode_names := [5]cstring{"Random", "Solver", "Primitives", "3D", "Layers"}
+			mode_names := [6]cstring{"Random", "Solver", "Primitives", "3D", "Layers", "Compute"}
 			mode_buf: [32]u8
 			fmt.bprintf(mode_buf[:], "Mode: %s\x00", mode_names[demo_mode])
 			imgui.Text(cstring(raw_data(mode_buf[:])))
@@ -318,6 +337,7 @@ refresh_demo :: proc(grid: ^Grid, mode: int, palette: ^Palette, blend: BlendMode
 	case 2: if palette != nil && patterns != nil do fill_primitives_demo(grid, palette, patterns)
 	case 3: // 3D mode refreshes per-frame in main loop
 	case 4: // Layers mode refreshes per-frame in main loop
+	case 5: // Compute mode runs on GPU
 	}
 }
 
