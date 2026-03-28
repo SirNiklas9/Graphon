@@ -5,6 +5,7 @@ out vec4 finalColor;
 
 uniform float time;
 uniform vec2 gridSize;
+uniform vec2 screenRes;
 uniform vec3 camPos;
 uniform vec3 camTarget;
 
@@ -80,7 +81,7 @@ void main() {
     vec2 tc = vec2(fragTexCoord.x, 1.0 - fragTexCoord.y);
     vec2 cellCoord = floor(tc * gridSize);
     vec2 uv = (cellCoord / gridSize) * 2.0 - 1.0;
-    uv.x *= gridSize.x / gridSize.y;
+    uv.x *= screenRes.x / screenRes.y;
 
     // Camera — from CPU uniforms (WASD + mouse controlled)
     vec3 ro = camPos;

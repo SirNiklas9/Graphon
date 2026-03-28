@@ -94,13 +94,16 @@ compute_run :: proc(cp: ^ComputePipeline, demo_mode: int, time_val: f32, grid: ^
 		bm := i32(blend_mode)
 		rl.SetShaderValue(shader, cp.extra_locs[demo_mode], &bm, .INT)
 	}
-	if demo_mode == 3 && cam != nil { // 3D camera
+	if demo_mode == 3 && cam != nil { // 3D camera + screen res
 		cam_pos_loc := rl.GetShaderLocation(shader, "camPos")
 		cam_target_loc := rl.GetShaderLocation(shader, "camTarget")
+		screen_res_loc := rl.GetShaderLocation(shader, "screenRes")
 		pos := cam.rl_cam.position
 		tgt := cam.rl_cam.target
+		res := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
 		rl.SetShaderValue(shader, cam_pos_loc, &pos, .VEC3)
 		rl.SetShaderValue(shader, cam_target_loc, &tgt, .VEC3)
+		rl.SetShaderValue(shader, screen_res_loc, &res, .VEC2)
 	}
 	if demo_mode == 6 { // scene needs resolution + cellsize
 		res_loc := rl.GetShaderLocation(shader, "resolution")

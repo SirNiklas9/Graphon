@@ -32,7 +32,7 @@ void main() {
 
     // Center UV
     vec2 p = uv * 2.0 - 1.0;
-    p.x *= gridSize.x / gridSize.y; // aspect correct
+    p.x *= resolution.x / resolution.y; // aspect correct from screen res
 
     // Dark background
     vec3 color = vec3(0.08, 0.08, 0.1);
