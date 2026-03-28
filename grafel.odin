@@ -26,6 +26,29 @@ ALL_CODEPOINTS :: [32]rune{
 	'▛', '▜', '▞', '▟',
 }
 
+// Fidelity levels — which character subsets are available at a given cell size
+Fidelity :: enum {
+	FULL_ONLY,    // cell < 6px  — just colored rects, no text draw
+	DENSITY,      // cell >= 6px — █ ▓ ▒ ░
+	HALF,         // cell >= 10px — + ▀ ▄ ▌ ▐
+	FRACTIONAL,   // cell >= 16px — + ▁▂▃▅▆▇ ▉▊▋▍▎▏ ▔▕
+	ALL,          // cell >= 20px — + ▖▗▘▝▙▚▛▜▞▟
+}
+
+// Character subsets by fidelity tier
+DENSITY_CHARS    :: [4]rune{'█', '▓', '▒', '░'}
+HALF_CHARS       :: [4]rune{'▀', '▄', '▌', '▐'}
+FRACTIONAL_CHARS :: [14]rune{'▁', '▂', '▃', '▅', '▆', '▇', '▉', '▊', '▋', '▍', '▎', '▏', '▔', '▕'}
+QUARTER_CHARS    :: [10]rune{'▖', '▗', '▘', '▝', '▙', '▚', '▛', '▜', '▞', '▟'}
+
+fidelity_from_cell_size :: proc(cell_size: f32) -> Fidelity {
+	if cell_size >= 20 do return .ALL
+	if cell_size >= 16 do return .FRACTIONAL
+	if cell_size >= 10 do return .HALF
+	if cell_size >= 6  do return .DENSITY
+	return .FULL_ONLY
+}
+
 // The Grafel buffer — flat framebuffer of cells
 Grid :: struct {
 	cells:     []Grafel,
@@ -34,6 +57,8 @@ Grid :: struct {
 	cell_w:    f32,
 	cell_h:    f32,
 	font_size: i32,
+	fidelity:  Fidelity,
+	forced_fidelity: bool,
 }
 
 grid_init :: proc(grid: ^Grid, screen_w, screen_h: i32, font: rl.Font, font_size: i32) {
@@ -49,6 +74,10 @@ grid_init :: proc(grid: ^Grid, screen_w, screen_h: i32, font: rl.Font, font_size
 	grid.rows = int(math.ceil(f32(screen_h) / grid.cell_h)) + 1
 
 	grid.cells = make([]Grafel, grid.cols * grid.rows)
+
+	if !grid.forced_fidelity {
+		grid.fidelity = fidelity_from_cell_size(grid.cell_w)
+	}
 }
 
 grid_destroy :: proc(grid: ^Grid) {

@@ -4,6 +4,10 @@ import rl "vendor:raylib"
 import "core:math"
 
 render_grid :: proc(grid: ^Grid, font: rl.Font) {
+	full_only := grid.fidelity == .FULL_ONLY
+	rect_w := math.ceil(grid.cell_w) + 1
+	rect_h := math.ceil(grid.cell_h) + 1
+
 	for row in 0 ..< grid.rows {
 		for col in 0 ..< grid.cols {
 			g := grid.cells[row * grid.cols + col]
@@ -13,9 +17,18 @@ render_grid :: proc(grid: ^Grid, font: rl.Font) {
 
 			// Background rect — ceil +1px to prevent seam gaps
 			rl.DrawRectangleRec(
-				{x, y, math.ceil(grid.cell_w) + 1, math.ceil(grid.cell_h) + 1},
+				{x, y, rect_w, rect_h},
 				transmute(rl.Color)g.bg,
 			)
+
+			// At FULL_ONLY fidelity, skip text — just draw colored rects
+			if full_only {
+				rl.DrawRectangleRec(
+					{x, y, rect_w, rect_h},
+					transmute(rl.Color)g.fg,
+				)
+				continue
+			}
 
 			// Foreground character
 			rl.DrawTextCodepoint(

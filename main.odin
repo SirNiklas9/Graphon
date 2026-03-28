@@ -40,6 +40,13 @@ main :: proc() {
 		if rl.IsKeyPressed(.DOWN) {
 			resize_font(&grid, &font, grid.font_size - 2)
 		}
+		// Allow going below 6px to see FULL_ONLY mode
+		if rl.IsKeyPressed(.LEFT) {
+			resize_font(&grid, &font, grid.font_size - 1)
+		}
+		if rl.IsKeyPressed(.RIGHT) {
+			resize_font(&grid, &font, grid.font_size + 1)
+		}
 
 		// Re-randomize on SPACE
 		if rl.IsKeyPressed(.SPACE) {
@@ -69,6 +76,17 @@ main :: proc() {
 			font_buf: [32]u8
 			fmt.bprintf(font_buf[:], "Font size: %d\x00", grid.font_size)
 			imgui.Text(cstring(raw_data(font_buf[:])))
+
+			fidelity_names := [Fidelity]cstring{
+				.FULL_ONLY  = "FULL_ONLY (rect)",
+				.DENSITY    = "DENSITY",
+				.HALF       = "HALF",
+				.FRACTIONAL = "FRACTIONAL",
+				.ALL        = "ALL",
+			}
+			fid_buf: [48]u8
+			fmt.bprintf(fid_buf[:], "Fidelity: %s\x00", fidelity_names[grid.fidelity])
+			imgui.Text(cstring(raw_data(fid_buf[:])))
 		}
 		imgui.End()
 
@@ -85,7 +103,7 @@ load_font :: proc(size: i32) -> rl.Font {
 }
 
 resize_font :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32) {
-	size := clamp(new_size, 6, 64)
+	size := clamp(new_size, 4, 64)
 	rl.UnloadFont(font^)
 	font^ = load_font(size)
 	grid_resize(grid, i32(rl.GetScreenWidth()), i32(rl.GetScreenHeight()), font^, size)
@@ -93,10 +111,37 @@ resize_font :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32) {
 }
 
 randomize_grid :: proc(grid: ^Grid) {
-	chars := ALL_CODEPOINTS
+	// Build available character pool based on fidelity
+	pool: [32]rune
+	pool_len: u32 = 0
+
+	density := DENSITY_CHARS
+	half := HALF_CHARS
+	fractional := FRACTIONAL_CHARS
+	quarter := QUARTER_CHARS
+
+	if grid.fidelity >= .DENSITY {
+		for c in density { pool[pool_len] = c; pool_len += 1 }
+	}
+	if grid.fidelity >= .HALF {
+		for c in half { pool[pool_len] = c; pool_len += 1 }
+	}
+	if grid.fidelity >= .FRACTIONAL {
+		for c in fractional { pool[pool_len] = c; pool_len += 1 }
+	}
+	if grid.fidelity >= .ALL {
+		for c in quarter { pool[pool_len] = c; pool_len += 1 }
+	}
+
+	// FULL_ONLY — just use full block, character won't be drawn anyway
+	if pool_len == 0 {
+		pool[0] = '█'
+		pool_len = 1
+	}
+
 	for i in 0 ..< len(grid.cells) {
 		grid.cells[i] = Grafel{
-			char = chars[rand.uint32() % 32],
+			char = pool[rand.uint32() % pool_len],
 			fg   = {u8(rand.uint32() % 256), u8(rand.uint32() % 256), u8(rand.uint32() % 256), 255},
 			bg   = {u8(rand.uint32() % 256), u8(rand.uint32() % 256), u8(rand.uint32() % 256), 255},
 		}
