@@ -34,7 +34,27 @@ main :: proc() {
 	grid_init(&grid, SCREEN_W, SCREEN_H, font, INIT_FONT_SZ)
 	defer grid_destroy(&grid)
 
-	demo_mode := false
+	patterns := pattern_lib_create()
+	defer pattern_lib_destroy(&patterns)
+
+	// Define some demo patterns
+	pattern_define(&patterns, "heart", {
+		".#.#.",
+		"#####",
+		"#####",
+		".###.",
+		"..#..",
+	}, palette_get(&palette, "red"))
+
+	pattern_define(&patterns, "star", {
+		"..#..",
+		".###.",
+		"#####",
+		".###.",
+		"..#..",
+	}, palette_get(&palette, "yellow"))
+
+	demo_mode: int = 0 // 0=random, 1=solver, 2=primitives
 	demo_blend := BlendMode.Normal
 
 	randomize_grid(&grid)
@@ -42,41 +62,33 @@ main :: proc() {
 	for !rl.WindowShouldClose() {
 		// Font size adjustment
 		if rl.IsKeyPressed(.UP) {
-			resize_font(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend)
+			resize_font(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns)
 		}
 		if rl.IsKeyPressed(.DOWN) {
-			resize_font(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend)
+			resize_font(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns)
 		}
 		if rl.IsKeyPressed(.LEFT) {
-			resize_font(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend)
+			resize_font(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns)
 		}
 		if rl.IsKeyPressed(.RIGHT) {
-			resize_font(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend)
+			resize_font(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns)
 		}
 
-		// Toggle demo mode
+		// Cycle demo mode: 0=random, 1=solver, 2=primitives
 		if rl.IsKeyPressed(.TAB) {
-			demo_mode = !demo_mode
-			if demo_mode {
-				fill_solver_demo(&grid, &palette, demo_blend)
-			} else {
-				randomize_grid(&grid)
-			}
+			demo_mode = (demo_mode + 1) % 3
+			refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
 		}
 
-		// Cycle blend mode in demo
-		if demo_mode && rl.IsKeyPressed(.B) {
+		// Cycle blend mode in solver demo
+		if demo_mode == 1 && rl.IsKeyPressed(.B) {
 			demo_blend = BlendMode((int(demo_blend) + 1) % 4)
-			fill_solver_demo(&grid, &palette, demo_blend)
+			refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
 		}
 
-		// Re-randomize on SPACE
+		// Re-randomize / refresh on SPACE
 		if rl.IsKeyPressed(.SPACE) {
-			if demo_mode {
-				fill_solver_demo(&grid, &palette, demo_blend)
-			} else {
-				randomize_grid(&grid)
-			}
+			refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
 		}
 
 		rl.BeginDrawing()
@@ -115,12 +127,12 @@ main :: proc() {
 			imgui.Text(cstring(raw_data(fid_buf[:])))
 
 			imgui.Separator()
-			mode_str: cstring = demo_mode ? "Solver Demo" : "Random"
+			mode_names := [3]cstring{"Random", "Solver", "Primitives"}
 			mode_buf: [32]u8
-			fmt.bprintf(mode_buf[:], "Mode: %s\x00", mode_str)
+			fmt.bprintf(mode_buf[:], "Mode: %s\x00", mode_names[demo_mode])
 			imgui.Text(cstring(raw_data(mode_buf[:])))
 
-			if demo_mode {
+			if demo_mode == 1 {
 				blend_names := [BlendMode]cstring{
 					.Normal   = "Normal",
 					.Alpha    = "Alpha",
@@ -146,15 +158,19 @@ load_font :: proc(size: i32) -> rl.Font {
 	return font
 }
 
-resize_font :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: bool = false, palette: ^Palette = nil, blend: BlendMode = .Normal) {
+resize_font :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int = 0, palette: ^Palette = nil, blend: BlendMode = .Normal, patterns: ^PatternLib = nil) {
 	size := clamp(new_size, 4, 64)
 	rl.UnloadFont(font^)
 	font^ = load_font(size)
 	grid_resize(grid, i32(rl.GetScreenWidth()), i32(rl.GetScreenHeight()), font^, size)
-	if demo_mode && palette != nil {
-		fill_solver_demo(grid, palette, blend)
-	} else {
-		randomize_grid(grid)
+	refresh_demo(grid, demo_mode, palette, blend, patterns)
+}
+
+refresh_demo :: proc(grid: ^Grid, mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib) {
+	switch mode {
+	case 0: randomize_grid(grid)
+	case 1: if palette != nil do fill_solver_demo(grid, palette, blend)
+	case 2: if palette != nil && patterns != nil do fill_primitives_demo(grid, palette, patterns)
 	}
 }
 
@@ -193,6 +209,48 @@ randomize_grid :: proc(grid: ^Grid) {
 			fg   = {u8(rand.uint32() % 256), u8(rand.uint32() % 256), u8(rand.uint32() % 256), 255},
 			bg   = {u8(rand.uint32() % 256), u8(rand.uint32() % 256), u8(rand.uint32() % 256), 255},
 		}
+	}
+}
+
+// Primitives demo: shapes, text, and patterns
+fill_primitives_demo :: proc(grid: ^Grid, palette: ^Palette, patterns: ^PatternLib) {
+	clear_grid(grid, palette_get(palette, "dark"))
+
+	white := palette_get(palette, "white")
+	red := palette_get(palette, "red")
+	green := palette_get(palette, "green")
+	blue := palette_get(palette, "blue")
+	cyan := palette_get(palette, "cyan")
+	yellow := palette_get(palette, "yellow")
+	magenta := palette_get(palette, "magenta")
+
+	// Title
+	draw_text(grid, 2, 1, "GRAPHON", white, {0, 0, 0, 0}, 2)
+
+	// Shapes
+	fill_rect(grid, 2, 12, 12, 6, blue, 0.75)
+	draw_rect(grid, 2, 12, 12, 6, cyan)
+	fill_circle(grid, 26, 15, 5, red, 0.5)
+	draw_circle(grid, 26, 15, 5, yellow)
+	draw_line(grid, 36, 10, 50, 20, green)
+	draw_line(grid, 36, 20, 50, 10, magenta)
+
+	// Text samples
+	draw_text(grid, 2, 22, "ABCDEFGHIJKLM", white)
+	draw_text(grid, 2, 28, "NOPQRSTUVWXYZ", white)
+	draw_text(grid, 2, 34, "0123456789", yellow)
+	draw_text(grid, 2, 40, "HELLO WORLD!", green)
+
+	// Patterns
+	draw_pattern(grid, patterns, 56, 12, "heart")
+	draw_pattern(grid, patterns, 56, 18, "star")
+	draw_pattern(grid, patterns, 64, 12, "heart", blue)
+	draw_pattern(grid, patterns, 64, 18, "star", cyan)
+
+	// Opacity gradient bar
+	for col in 0 ..< min(40, grid.cols - 2) {
+		opacity := f32(col) / 39.0
+		plot_grafel(grid, 2 + col, 47, white, opacity)
 	}
 }
 
