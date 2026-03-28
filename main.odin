@@ -64,6 +64,12 @@ main :: proc() {
 	defer depth_buffer_destroy(&db)
 	time: f32 = 0
 
+	// Lighting
+	scene_lights := lighting_create({40, 40, 50, 255})
+	defer lighting_destroy(&scene_lights)
+	add_directional(&scene_lights, {-0.5, -1, -0.3}, {255, 240, 220, 255}, 0.8)
+	add_point_light(&scene_lights, {0, 6, 0}, {255, 100, 50, 255}, 1.2, 20.0)
+
 	mouse: Mouse
 	show_cursor := true
 	paint_color := palette_get(&palette, "white")
@@ -104,7 +110,7 @@ main :: proc() {
 			dt := rl.GetFrameTime()
 			time += dt
 			camera_update(&cam, dt)
-			fill_3d_demo(&grid, &db, &cam, &palette, time)
+			fill_3d_demo(&grid, &db, &cam, &palette, &scene_lights, time)
 		}
 
 		// Cycle blend mode in solver demo
@@ -313,12 +319,18 @@ fill_primitives_demo :: proc(grid: ^Grid, palette: ^Palette, patterns: ^PatternL
 	}
 }
 
-// 3D demo: spinning cube + ground plane + pillars
-fill_3d_demo :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, palette: ^Palette, time: f32) {
-	clear_grid(grid, palette_get(palette, "dark"))
+// Plot a 3D point with lighting applied
+plot_3d_lit :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, lights: ^Lighting, point: rl.Vector3, color: [4]u8, fog_color: [4]u8) {
+	lit := light_point_simple(lights, color, point)
+	plot_3d(grid, db, cam, point, lit, fog_color)
+}
+
+// 3D demo: solid rasterized meshes with lighting
+fill_3d_demo :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, palette: ^Palette, lights: ^Lighting, time: f32) {
+	fog_color := palette_get(palette, "dark")
+	clear_grid(grid, fog_color)
 	depth_buffer_clear(db)
 
-	fog_color := palette_get(palette, "dark")
 	green := palette_get(palette, "green")
 	blue := palette_get(palette, "blue")
 	red := palette_get(palette, "red")
@@ -327,49 +339,42 @@ fill_3d_demo :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, palette: ^Pale
 	white := palette_get(palette, "white")
 	gray := palette_get(palette, "gray")
 
-	// Ground plane (grid of points)
-	for gz: f32 = -20; gz <= 20; gz += 1 {
-		for gx: f32 = -20; gx <= 20; gx += 1 {
-			checker := (int(gx + 100) + int(gz + 100)) % 2 == 0
-			color := checker ? gray : palette_get(palette, "dark")
-			if color[0] == fog_color[0] && color[1] == fog_color[1] && color[2] == fog_color[2] do continue
-			plot_3d(grid, db, cam, {gx, 0, gz}, color, fog_color)
+	// Move the point light in a circle
+	lights.lights[1].position = {math.cos(time * 0.7) * 8, 6, math.sin(time * 0.7) * 8}
+
+	// Ground plane — subdivided for smooth lighting
+	tile_size: f32 = 4
+	for gz: f32 = -20; gz < 20; gz += tile_size {
+		for gx: f32 = -20; gx < 20; gx += tile_size {
+			raster_quad(grid, db, cam,
+				{gx, 0, gz + tile_size},
+				{gx + tile_size, 0, gz + tile_size},
+				{gx + tile_size, 0, gz},
+				{gx, 0, gz},
+				gray, lights, fog_color,
+			)
 		}
 	}
 
-	// Spinning cube
-	cube_size: f32 = 2.0
-	cos_t := math.cos(time)
-	sin_t := math.sin(time)
+	// Spinning cube — solid rasterized box
+	raster_box_rotated(grid, db, cam,
+		{0, 4, 0}, {4, 4, 4}, red,
+		time,
+		lights, fog_color,
+	)
 
-	for z: f32 = -cube_size; z <= cube_size; z += 0.3 {
-		for y: f32 = -cube_size; y <= cube_size; y += 0.3 {
-			for x: f32 = -cube_size; x <= cube_size; x += 0.3 {
-				// Only draw surface
-				is_surface := abs(x) > cube_size - 0.4 || abs(y) > cube_size - 0.4 || abs(z) > cube_size - 0.4
-				if !is_surface do continue
-
-				// Rotate around Y axis
-				rx := x * cos_t - z * sin_t
-				rz := x * sin_t + z * cos_t
-
-				plot_3d(grid, db, cam, {rx, y + 4, rz}, red, fog_color)
-			}
-		}
-	}
-
-	// Colored pillars
+	// Colored pillars — solid boxes
 	pillar_colors := [4][4]u8{green, blue, cyan, yellow}
 	pillar_positions := [4][2]f32{{-8, -5}, {8, -5}, {-8, 5}, {8, 5}}
 	for i in 0 ..< 4 {
 		px := pillar_positions[i][0]
 		pz := pillar_positions[i][1]
-		for py: f32 = 0; py <= 6; py += 0.3 {
-			plot_3d(grid, db, cam, {px, py, pz}, pillar_colors[i], fog_color)
-		}
+		raster_box(grid, db, cam,
+			{px, 3, pz}, {1.5, 6, 1.5}, pillar_colors[i],
+			lights, fog_color,
+		)
 	}
 
-	// Floating text label
 	draw_text(grid, 2, 1, "3D MODE - WASD+MOUSE", white)
 }
 
