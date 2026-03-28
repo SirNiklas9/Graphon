@@ -55,8 +55,12 @@ main :: proc() {
 		"..#..",
 	}, palette_get(&palette, "yellow"))
 
-	demo_mode: int = 0 // 0=random, 1=solver, 2=primitives, 3=3D
+	demo_mode: int = 0 // 0=random, 1=solver, 2=primitives, 3=3D, 4=layers
 	demo_blend := BlendMode.Normal
+
+	// Layer stack
+	ls := layer_stack_create(grid.cols, grid.rows)
+	defer layer_stack_destroy(&ls)
 
 	// 3D state
 	cam := camera_create({0, 5, 12}, {0, 0, 0})
@@ -80,27 +84,28 @@ main :: proc() {
 		// Update mouse
 		mouse_update(&mouse, &grid)
 		// Font size adjustment
-		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer) {
+		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer, ls: ^LayerStack) {
 			resize_font(grid, font, new_size, demo_mode, palette, blend, patterns)
 			depth_buffer_resize(db, grid.cols, grid.rows)
+			layer_stack_resize(ls, grid.cols, grid.rows)
 		}
 		if rl.IsKeyPressed(.UP) {
-			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db)
+			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls)
 		}
 		if rl.IsKeyPressed(.DOWN) {
-			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db)
+			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls)
 		}
 		if rl.IsKeyPressed(.LEFT) {
-			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db)
+			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls)
 		}
 		if rl.IsKeyPressed(.RIGHT) {
-			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db)
+			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls)
 		}
 
-		// Cycle demo mode: 0=random, 1=solver, 2=primitives, 3=3D
+		// Cycle demo mode: 0=random, 1=solver, 2=primitives, 3=3D, 4=layers
 		if rl.IsKeyPressed(.TAB) {
-			demo_mode = (demo_mode + 1) % 4
-			if demo_mode != 3 {
+			demo_mode = (demo_mode + 1) % 5
+			if demo_mode != 3 && demo_mode != 4 {
 				refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
 			}
 		}
@@ -111,6 +116,12 @@ main :: proc() {
 			time += dt
 			camera_update(&cam, dt)
 			fill_3d_demo(&grid, &db, &cam, &palette, &scene_lights, time)
+		}
+
+		// Layers mode: composited every frame
+		if demo_mode == 4 {
+			time += rl.GetFrameTime()
+			fill_layers_demo(&grid, &ls, &palette, time)
 		}
 
 		// Cycle blend mode in solver demo
@@ -187,7 +198,7 @@ main :: proc() {
 			imgui.Text(cstring(raw_data(fid_buf[:])))
 
 			imgui.Separator()
-			mode_names := [4]cstring{"Random", "Solver", "Primitives", "3D"}
+			mode_names := [5]cstring{"Random", "Solver", "Primitives", "3D", "Layers"}
 			mode_buf: [32]u8
 			fmt.bprintf(mode_buf[:], "Mode: %s\x00", mode_names[demo_mode])
 			imgui.Text(cstring(raw_data(mode_buf[:])))
@@ -236,6 +247,7 @@ refresh_demo :: proc(grid: ^Grid, mode: int, palette: ^Palette, blend: BlendMode
 	case 1: if palette != nil do fill_solver_demo(grid, palette, blend)
 	case 2: if palette != nil && patterns != nil do fill_primitives_demo(grid, palette, patterns)
 	case 3: // 3D mode refreshes per-frame in main loop
+	case 4: // Layers mode refreshes per-frame in main loop
 	}
 }
 
@@ -376,6 +388,88 @@ fill_3d_demo :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, palette: ^Pale
 	}
 
 	draw_text(grid, 2, 1, "3D MODE - WASD+MOUSE", white)
+}
+
+// Layers demo: 5 layers composited together
+fill_layers_demo :: proc(grid: ^Grid, ls: ^LayerStack, palette: ^Palette, time: f32) {
+	layer_clear_all(ls)
+
+	white := palette_get(palette, "white")
+	red := palette_get(palette, "red")
+	green := palette_get(palette, "green")
+	blue := palette_get(palette, "blue")
+	cyan := palette_get(palette, "cyan")
+	yellow := palette_get(palette, "yellow")
+	dark := palette_get(palette, "dark")
+
+	// Layer 0: Background — dark with subtle gradient
+	for row in 0 ..< ls.rows {
+		for col in 0 ..< ls.cols {
+			brightness := u8(20 + int(f32(row) / f32(ls.rows) * 30))
+			layer_set(ls, .Background, col, row, Grafel{
+				char = '█',
+				fg = {brightness, brightness, brightness + 10, 255},
+				bg = {brightness, brightness, brightness + 10, 255},
+			})
+		}
+	}
+
+	// Layer 1: World — static shapes
+	for col in 5 ..< min(45, ls.cols) {
+		for row in 20 ..< min(35, ls.rows) {
+			layer_plot(ls, .World, col, row, blue, 0.75)
+		}
+	}
+	for col in 30 ..< min(60, ls.cols) {
+		for row in 15 ..< min(30, ls.rows) {
+			layer_plot(ls, .World, col, row, green, 0.5)
+		}
+	}
+
+	// Layer 2: Entity — moving circle
+	cx := int(f32(ls.cols) / 2 + math.cos(time) * 15)
+	cy := int(f32(ls.rows) / 2 + math.sin(time * 0.7) * 8)
+	for row in cy - 4 ..= cy + 4 {
+		for col in cx - 4 ..= cx + 4 {
+			dx := col - cx
+			dy := row - cy
+			if dx * dx + dy * dy <= 16 {
+				layer_plot(ls, .Entity, col, row, red, 1.0)
+			}
+		}
+	}
+
+	// Layer 3: Effects — pulsing glow around entity
+	glow_r := 6 + int(math.sin(time * 3) * 2)
+	for row in cy - glow_r ..= cy + glow_r {
+		for col in cx - glow_r ..= cx + glow_r {
+			dx := col - cx
+			dy := row - cy
+			dist_sq := dx * dx + dy * dy
+			if dist_sq <= glow_r * glow_r && dist_sq > 16 {
+				opacity := 1.0 - f32(dist_sq) / f32(glow_r * glow_r)
+				layer_plot(ls, .Effects, col, row, yellow, opacity * 0.6, .Additive)
+			}
+		}
+	}
+
+	// Layer 4: UI — text overlay always on top
+	// Write directly to UI layer buffer using a temporary grid wrapper
+	ui_grid := Grid{
+		cells = ls.layers[LayerID.UI],
+		cols = ls.cols,
+		rows = ls.rows,
+		cell_w = grid.cell_w,
+		cell_h = grid.cell_h,
+		font_size = grid.font_size,
+		fidelity = grid.fidelity,
+	}
+	draw_text(&ui_grid, 2, 1, "LAYERS DEMO", white)
+	draw_text(&ui_grid, 2, 7, "BG  WORLD  ENTITY  FX  UI", cyan)
+
+	// Composite and output
+	layer_composite(ls)
+	layer_to_grid(ls, grid)
 }
 
 // Solver demo: horizontal opacity gradient using palette colors, one row per color
