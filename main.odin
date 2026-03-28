@@ -76,6 +76,10 @@ main :: proc() {
 
 	cfg := config_default()
 
+	// GPU pipeline
+	gpu := gpu_create(SCREEN_W, SCREEN_H)
+	defer gpu_destroy(&gpu)
+
 	mouse: Mouse
 	show_cursor := true
 	paint_color := palette_get(&palette, "white")
@@ -159,34 +163,39 @@ main :: proc() {
 		if rl.IsKeyPressed(.F1) { cfg.show_grid_lines = !cfg.show_grid_lines }
 		if rl.IsKeyPressed(.F2) { cfg.show_cell_coords = !cfg.show_cell_coords }
 		if rl.IsKeyPressed(.F3) && demo_mode == 3 { cfg.show_depth = !cfg.show_depth }
+		if rl.IsKeyPressed(.F4) { gpu_cycle_fx(&gpu) }
 		if rl.IsKeyPressed(.F12) { export_screenshot() }
 
 		// Save current scene
 		if rl.IsKeyPressed(.F5) { save_scene(&grid, "scene.grf") }
-
-		rl.BeginDrawing()
-		rl.ClearBackground(rl.BLACK)
 
 		// Debug: depth buffer visualization (replaces grid content)
 		if cfg.show_depth && demo_mode == 3 {
 			debug_depth_buffer(&grid, &db)
 		}
 
-		// Render Grafel grid with cursor overlay
+		// Render Grafel grid with cursor overlay to GPU render texture
 		saved_cell: Grafel
 		cursor_active := show_cursor && mouse.in_bounds
 		if cursor_active {
 			saved_cell = grid_get(&grid, mouse.col, mouse.row)
 			draw_cursor(&grid, &mouse)
 		}
+
+		gpu_begin(&gpu)
 		render_grid(&grid, font)
+		if cfg.show_grid_lines { debug_grid_lines(&grid) }
+		if cfg.show_cell_coords { debug_cell_coords(&grid, font) }
+		gpu_end(&gpu)
+
 		if cursor_active {
 			grid_set(&grid, mouse.col, mouse.row, saved_cell)
 		}
 
-		// Debug overlays (drawn on top via Raylib, not in Grafel buffer)
-		if cfg.show_grid_lines { debug_grid_lines(&grid) }
-		if cfg.show_cell_coords { debug_cell_coords(&grid, font) }
+		// Present with post-process shader, then draw ImGui on top
+		rl.BeginDrawing()
+		rl.ClearBackground(rl.BLACK)
+		gpu_present(&gpu, time)
 
 		// ImGui overlay
 		rlimgui.begin()
@@ -240,8 +249,19 @@ main :: proc() {
 			}
 
 			imgui.Separator()
+			fx_names := [PostFX]cstring{
+				.None      = "None",
+				.Bloom     = "Bloom",
+				.Scanlines = "Scanlines",
+				.Chromatic = "Chromatic",
+			}
+			fx_buf: [32]u8
+			fmt.bprintf(fx_buf[:], "PostFX: %s\x00", fx_names[gpu.active_fx])
+			imgui.Text(cstring(raw_data(fx_buf[:])))
+
+			imgui.Separator()
 			imgui.Text("F1:Grid F2:Coords F3:Depth")
-			imgui.Text("F5:Save F12:Screenshot")
+			imgui.Text("F4:PostFX F5:Save F12:Screenshot")
 		}
 		imgui.End()
 
