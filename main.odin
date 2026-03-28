@@ -1,6 +1,7 @@
 package main
 
 import rl "vendor:raylib"
+import "core:math"
 import "core:math/rand"
 import "core:fmt"
 import "core:strings"
@@ -54,8 +55,14 @@ main :: proc() {
 		"..#..",
 	}, palette_get(&palette, "yellow"))
 
-	demo_mode: int = 0 // 0=random, 1=solver, 2=primitives
+	demo_mode: int = 0 // 0=random, 1=solver, 2=primitives, 3=3D
 	demo_blend := BlendMode.Normal
+
+	// 3D state
+	cam := camera_create({0, 5, 12}, {0, 0, 0})
+	db := depth_buffer_create(grid.cols, grid.rows)
+	defer depth_buffer_destroy(&db)
+	time: f32 = 0
 
 	mouse: Mouse
 	show_cursor := true
@@ -67,23 +74,37 @@ main :: proc() {
 		// Update mouse
 		mouse_update(&mouse, &grid)
 		// Font size adjustment
+		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer) {
+			resize_font(grid, font, new_size, demo_mode, palette, blend, patterns)
+			depth_buffer_resize(db, grid.cols, grid.rows)
+		}
 		if rl.IsKeyPressed(.UP) {
-			resize_font(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns)
+			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db)
 		}
 		if rl.IsKeyPressed(.DOWN) {
-			resize_font(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns)
+			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db)
 		}
 		if rl.IsKeyPressed(.LEFT) {
-			resize_font(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns)
+			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db)
 		}
 		if rl.IsKeyPressed(.RIGHT) {
-			resize_font(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns)
+			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db)
 		}
 
-		// Cycle demo mode: 0=random, 1=solver, 2=primitives
+		// Cycle demo mode: 0=random, 1=solver, 2=primitives, 3=3D
 		if rl.IsKeyPressed(.TAB) {
-			demo_mode = (demo_mode + 1) % 3
-			refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
+			demo_mode = (demo_mode + 1) % 4
+			if demo_mode != 3 {
+				refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
+			}
+		}
+
+		// 3D mode: update camera and re-render every frame
+		if demo_mode == 3 {
+			dt := rl.GetFrameTime()
+			time += dt
+			camera_update(&cam, dt)
+			fill_3d_demo(&grid, &db, &cam, &palette, time)
 		}
 
 		// Cycle blend mode in solver demo
@@ -160,7 +181,7 @@ main :: proc() {
 			imgui.Text(cstring(raw_data(fid_buf[:])))
 
 			imgui.Separator()
-			mode_names := [3]cstring{"Random", "Solver", "Primitives"}
+			mode_names := [4]cstring{"Random", "Solver", "Primitives", "3D"}
 			mode_buf: [32]u8
 			fmt.bprintf(mode_buf[:], "Mode: %s\x00", mode_names[demo_mode])
 			imgui.Text(cstring(raw_data(mode_buf[:])))
@@ -208,6 +229,7 @@ refresh_demo :: proc(grid: ^Grid, mode: int, palette: ^Palette, blend: BlendMode
 	case 0: randomize_grid(grid)
 	case 1: if palette != nil do fill_solver_demo(grid, palette, blend)
 	case 2: if palette != nil && patterns != nil do fill_primitives_demo(grid, palette, patterns)
+	case 3: // 3D mode refreshes per-frame in main loop
 	}
 }
 
@@ -289,6 +311,66 @@ fill_primitives_demo :: proc(grid: ^Grid, palette: ^Palette, patterns: ^PatternL
 		opacity := f32(col) / 39.0
 		plot_grafel(grid, 2 + col, 47, white, opacity)
 	}
+}
+
+// 3D demo: spinning cube + ground plane + pillars
+fill_3d_demo :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, palette: ^Palette, time: f32) {
+	clear_grid(grid, palette_get(palette, "dark"))
+	depth_buffer_clear(db)
+
+	fog_color := palette_get(palette, "dark")
+	green := palette_get(palette, "green")
+	blue := palette_get(palette, "blue")
+	red := palette_get(palette, "red")
+	cyan := palette_get(palette, "cyan")
+	yellow := palette_get(palette, "yellow")
+	white := palette_get(palette, "white")
+	gray := palette_get(palette, "gray")
+
+	// Ground plane (grid of points)
+	for gz: f32 = -20; gz <= 20; gz += 1 {
+		for gx: f32 = -20; gx <= 20; gx += 1 {
+			checker := (int(gx + 100) + int(gz + 100)) % 2 == 0
+			color := checker ? gray : palette_get(palette, "dark")
+			if color[0] == fog_color[0] && color[1] == fog_color[1] && color[2] == fog_color[2] do continue
+			plot_3d(grid, db, cam, {gx, 0, gz}, color, fog_color)
+		}
+	}
+
+	// Spinning cube
+	cube_size: f32 = 2.0
+	cos_t := math.cos(time)
+	sin_t := math.sin(time)
+
+	for z: f32 = -cube_size; z <= cube_size; z += 0.3 {
+		for y: f32 = -cube_size; y <= cube_size; y += 0.3 {
+			for x: f32 = -cube_size; x <= cube_size; x += 0.3 {
+				// Only draw surface
+				is_surface := abs(x) > cube_size - 0.4 || abs(y) > cube_size - 0.4 || abs(z) > cube_size - 0.4
+				if !is_surface do continue
+
+				// Rotate around Y axis
+				rx := x * cos_t - z * sin_t
+				rz := x * sin_t + z * cos_t
+
+				plot_3d(grid, db, cam, {rx, y + 4, rz}, red, fog_color)
+			}
+		}
+	}
+
+	// Colored pillars
+	pillar_colors := [4][4]u8{green, blue, cyan, yellow}
+	pillar_positions := [4][2]f32{{-8, -5}, {8, -5}, {-8, 5}, {8, 5}}
+	for i in 0 ..< 4 {
+		px := pillar_positions[i][0]
+		pz := pillar_positions[i][1]
+		for py: f32 = 0; py <= 6; py += 0.3 {
+			plot_3d(grid, db, cam, {px, py, pz}, pillar_colors[i], fog_color)
+		}
+	}
+
+	// Floating text label
+	draw_text(grid, 2, 1, "3D MODE - WASD+MOUSE", white)
 }
 
 // Solver demo: horizontal opacity gradient using palette colors, one row per color
