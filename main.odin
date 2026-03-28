@@ -74,6 +74,8 @@ main :: proc() {
 	add_directional(&scene_lights, {-0.5, -1, -0.3}, {255, 240, 220, 255}, 0.8)
 	add_point_light(&scene_lights, {0, 6, 0}, {255, 100, 50, 255}, 1.2, 20.0)
 
+	cfg := config_default()
+
 	mouse: Mouse
 	show_cursor := true
 	paint_color := palette_get(&palette, "white")
@@ -153,8 +155,22 @@ main :: proc() {
 			refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
 		}
 
+		// Debug toggles
+		if rl.IsKeyPressed(.F1) { cfg.show_grid_lines = !cfg.show_grid_lines }
+		if rl.IsKeyPressed(.F2) { cfg.show_cell_coords = !cfg.show_cell_coords }
+		if rl.IsKeyPressed(.F3) && demo_mode == 3 { cfg.show_depth = !cfg.show_depth }
+		if rl.IsKeyPressed(.F12) { export_screenshot() }
+
+		// Save current scene
+		if rl.IsKeyPressed(.F5) { save_scene(&grid, "scene.grf") }
+
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.BLACK)
+
+		// Debug: depth buffer visualization (replaces grid content)
+		if cfg.show_depth && demo_mode == 3 {
+			debug_depth_buffer(&grid, &db)
+		}
 
 		// Render Grafel grid with cursor overlay
 		saved_cell: Grafel
@@ -167,6 +183,10 @@ main :: proc() {
 		if cursor_active {
 			grid_set(&grid, mouse.col, mouse.row, saved_cell)
 		}
+
+		// Debug overlays (drawn on top via Raylib, not in Grafel buffer)
+		if cfg.show_grid_lines { debug_grid_lines(&grid) }
+		if cfg.show_cell_coords { debug_cell_coords(&grid, font) }
 
 		// ImGui overlay
 		rlimgui.begin()
@@ -218,6 +238,10 @@ main :: proc() {
 				fmt.bprintf(bl_buf[:], "Blend: %s\x00", blend_names[demo_blend])
 				imgui.Text(cstring(raw_data(bl_buf[:])))
 			}
+
+			imgui.Separator()
+			imgui.Text("F1:Grid F2:Coords F3:Depth")
+			imgui.Text("F5:Save F12:Screenshot")
 		}
 		imgui.End()
 
