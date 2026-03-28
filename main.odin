@@ -57,9 +57,15 @@ main :: proc() {
 	demo_mode: int = 0 // 0=random, 1=solver, 2=primitives
 	demo_blend := BlendMode.Normal
 
+	mouse: Mouse
+	show_cursor := true
+	paint_color := palette_get(&palette, "white")
+
 	randomize_grid(&grid)
 
 	for !rl.WindowShouldClose() {
+		// Update mouse
+		mouse_update(&mouse, &grid)
 		// Font size adjustment
 		if rl.IsKeyPressed(.UP) {
 			resize_font(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns)
@@ -86,6 +92,24 @@ main :: proc() {
 			refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
 		}
 
+		// Toggle cursor
+		if rl.IsKeyPressed(.C) {
+			show_cursor = !show_cursor
+		}
+
+		// Paint with mouse (left = paint, right = erase)
+		io := imgui.GetIO()
+		imgui_wants_mouse := io.WantCaptureMouse
+		if mouse.in_bounds && !imgui_wants_mouse {
+			if mouse.left {
+				plot_grafel(&grid, mouse.col, mouse.row, paint_color, 1.0)
+			}
+			if mouse.right {
+				bg := [4]u8{32, 32, 32, 255}
+				grid_set(&grid, mouse.col, mouse.row, Grafel{char = '█', fg = bg, bg = bg})
+			}
+		}
+
 		// Re-randomize / refresh on SPACE
 		if rl.IsKeyPressed(.SPACE) {
 			refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
@@ -94,8 +118,17 @@ main :: proc() {
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.BLACK)
 
-		// Render Grafel grid
+		// Render Grafel grid with cursor overlay
+		saved_cell: Grafel
+		cursor_active := show_cursor && mouse.in_bounds
+		if cursor_active {
+			saved_cell = grid_get(&grid, mouse.col, mouse.row)
+			draw_cursor(&grid, &mouse)
+		}
 		render_grid(&grid, font)
+		if cursor_active {
+			grid_set(&grid, mouse.col, mouse.row, saved_cell)
+		}
 
 		// ImGui overlay
 		rlimgui.begin()
@@ -131,6 +164,10 @@ main :: proc() {
 			mode_buf: [32]u8
 			fmt.bprintf(mode_buf[:], "Mode: %s\x00", mode_names[demo_mode])
 			imgui.Text(cstring(raw_data(mode_buf[:])))
+
+			mouse_buf: [48]u8
+			fmt.bprintf(mouse_buf[:], "Mouse: %d, %d\x00", mouse.col, mouse.row)
+			imgui.Text(cstring(raw_data(mouse_buf[:])))
 
 			if demo_mode == 1 {
 				blend_names := [BlendMode]cstring{
