@@ -189,7 +189,15 @@ main :: proc() {
 			draw_cursor(&grid, &mouse)
 		}
 
-		gpu_begin(&gpu)
+		use_postfx := gpu.active_fx != .None
+
+		if use_postfx {
+			gpu_begin(&gpu)
+		} else {
+			rl.BeginDrawing()
+			rl.ClearBackground(rl.BLACK)
+		}
+
 		if use_gpu_grid && gg.enabled {
 			gpu_grid_upload(&gg, &grid)
 			gpu_grid_render(&gg, &grid, font)
@@ -198,16 +206,17 @@ main :: proc() {
 		}
 		if cfg.show_grid_lines { debug_grid_lines(&grid) }
 		if cfg.show_cell_coords { debug_cell_coords(&grid, font) }
-		gpu_end(&gpu)
+
+		if use_postfx {
+			gpu_end(&gpu)
+			rl.BeginDrawing()
+			rl.ClearBackground(rl.BLACK)
+			gpu_present(&gpu, time)
+		}
 
 		if cursor_active {
 			grid_set(&grid, mouse.col, mouse.row, saved_cell)
 		}
-
-		// Present with post-process shader, then draw ImGui on top
-		rl.BeginDrawing()
-		rl.ClearBackground(rl.BLACK)
-		gpu_present(&gpu, time)
 
 		// ImGui overlay
 		rlimgui.begin()

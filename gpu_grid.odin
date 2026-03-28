@@ -40,10 +40,12 @@ gpu_grid_create :: proc(cols, rows: int) -> GPUGrid {
 	// Load the grid rendering shader
 	gg.shader = rl.LoadShader(nil, "assets/gpu_grid.glsl")
 
-	// Check if shader loaded successfully
-	if gg.shader.id == 0 {
+	// Check if shader loaded (id 0 = Raylib default, not our shader)
+	if gg.shader.id <= 0 {
+		rl.TraceLog(.WARNING, "GPU grid shader failed to load")
 		return gg
 	}
+	rl.TraceLog(.INFO, "GPU grid shader loaded (program ID: %d)", gg.shader.id)
 
 	// Get uniform locations
 	gg.cell_fg_loc = rl.GetShaderLocation(gg.shader, "texture0")
@@ -219,7 +221,10 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font) {
 	fg_unit: i32 = 0
 	rl.SetShaderValue(gg.shader, gg.cell_fg_loc, &fg_unit, .INT)
 
-	// Bind additional textures
+	// Flush any pending Raylib draws before we mess with texture units
+	rlgl.DrawRenderBatchActive()
+
+	// Bind additional textures to their units
 	rlgl.ActiveTextureSlot(bg_unit)
 	rlgl.EnableTexture(gg.bg_tex.id)
 	rlgl.ActiveTextureSlot(char_unit)
@@ -228,14 +233,15 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font) {
 	rlgl.EnableTexture(font.texture.id)
 	rlgl.ActiveTextureSlot(0)
 
-	// Draw fg texture as fullscreen quad — shader does all the real work
+	// Draw fg texture fullscreen — the shader reads cell data and renders the grid
 	rl.BeginShaderMode(gg.shader)
 	src := rl.Rectangle{0, 0, f32(gg.fg_tex.width), f32(gg.fg_tex.height)}
 	dst := rl.Rectangle{0, 0, res[0], res[1]}
 	rl.DrawTexturePro(gg.fg_tex, src, dst, {0, 0}, 0, rl.WHITE)
 	rl.EndShaderMode()
 
-	// Clean up
+	// Flush then clean up texture bindings
+	rlgl.DrawRenderBatchActive()
 	for unit in 1 ..= 3 {
 		rlgl.ActiveTextureSlot(i32(unit))
 		rlgl.DisableTexture()
