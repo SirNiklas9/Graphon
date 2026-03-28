@@ -27,11 +27,15 @@ mouse_update :: proc(mouse: ^Mouse, grid: ^Grid) {
 	mouse.pixel_x = pos.x
 	mouse.pixel_y = pos.y
 
-	mouse.col = int(pos.x / grid.cell_w)
-	mouse.row = int(pos.y / grid.cell_h)
-	mouse.col = clamp(mouse.col, 0, max(grid.cols - 1, 0))
-	mouse.row = clamp(mouse.row, 0, max(grid.rows - 1, 0))
-	mouse.in_bounds = mouse.col >= 0 && mouse.col < grid.cols && mouse.row >= 0 && mouse.row < grid.rows
+	if grid.cell_w > 0 && grid.cell_h > 0 && len(grid.cells) > 0 {
+		mouse.col = int(pos.x / grid.cell_w)
+		mouse.row = int(pos.y / grid.cell_h)
+		mouse.col = clamp(mouse.col, 0, max(grid.cols - 1, 0))
+		mouse.row = clamp(mouse.row, 0, max(grid.rows - 1, 0))
+		mouse.in_bounds = mouse.col >= 0 && mouse.col < grid.cols && mouse.row >= 0 && mouse.row < grid.rows
+	} else {
+		mouse.in_bounds = false
+	}
 
 	mouse.left = rl.IsMouseButtonDown(.LEFT)
 	mouse.right = rl.IsMouseButtonDown(.RIGHT)
@@ -44,8 +48,9 @@ mouse_update :: proc(mouse: ^Mouse, grid: ^Grid) {
 // Draw a cursor Grafel at the mouse position
 draw_cursor :: proc(grid: ^Grid, mouse: ^Mouse, color: [4]u8 = {255, 255, 255, 255}) {
 	if !mouse.in_bounds do return
-	// Invert the cell under cursor for visibility
+	if mouse.col >= grid.cols || mouse.row >= grid.rows do return
 	idx := mouse.row * grid.cols + mouse.col
+	if idx >= len(grid.cells) do return
 	existing := grid.cells[idx]
 	grid.cells[idx] = Grafel{
 		char = '█',

@@ -66,12 +66,23 @@ grid_init :: proc(grid: ^Grid, screen_w, screen_h: i32, font: rl.Font, font_size
 
 	// Measure cell dimensions from the monospace font
 	measured := rl.MeasureTextEx(font, "W", f32(font_size), 0)
-	grid.cell_w = measured.x
-	grid.cell_h = measured.y
+	grid.cell_w = max(measured.x, 1)
+	grid.cell_h = max(measured.y, 1)
 
 	// Overflow by +1 to prevent black bars at edges
 	grid.cols = int(math.ceil(f32(screen_w) / grid.cell_w)) + 1
 	grid.rows = int(math.ceil(f32(screen_h) / grid.cell_h)) + 1
+
+	// Cap grid size to prevent insane memory usage
+	MAX_CELLS :: 1000000 // 1M cells max
+	if grid.cols * grid.rows > MAX_CELLS {
+		// Scale down to fit
+		ratio := f32(MAX_CELLS) / f32(grid.cols * grid.rows)
+		grid.cols = int(f32(grid.cols) * math.sqrt(ratio))
+		grid.rows = int(f32(grid.rows) * math.sqrt(ratio))
+	}
+	grid.cols = max(grid.cols, 1)
+	grid.rows = max(grid.rows, 1)
 
 	grid.cells = make([]Grafel, grid.cols * grid.rows)
 
