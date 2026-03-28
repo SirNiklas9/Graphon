@@ -13,6 +13,15 @@ SCREEN_H     :: 1080
 INIT_FONT_SZ :: i32(20)
 FONT_PATH    :: "assets/JetBrainsMonoNLNerdFont-Regular.ttf"
 
+// Render path
+RenderPath :: enum {
+	CPU,     // CPU fills buffer + CPU draws each cell
+	Hybrid,  // CPU fills buffer + GPU displays (one draw call)
+	GPU,     // GPU compute fills + GPU displays (zero CPU)
+}
+
+RENDER_PATH_COUNT :: 3
+
 main :: proc() {
 	rl.InitWindow(SCREEN_W, SCREEN_H, "Graphon")
 	defer rl.CloseWindow()
@@ -84,10 +93,10 @@ main :: proc() {
 	gpu := gpu_create(SCREEN_W, SCREEN_H)
 	defer gpu_destroy(&gpu)
 
-	// GPU grid renderer (true one-draw-call)
+	// GPU grid renderer (hybrid + GPU display)
 	gg := gpu_grid_create(grid.cols, grid.rows)
 	defer gpu_grid_destroy(&gg)
-	use_gpu_grid := false
+	render_path := RenderPath.CPU
 
 	mouse: Mouse
 	show_cursor := true
@@ -147,6 +156,16 @@ main :: proc() {
 			compute_run(&cp, time, &grid)
 		}
 
+		// GPU render path: run compute shader to fill buffer on GPU
+		if render_path == .GPU {
+			if demo_mode == 0 {
+				cp.active_mode = .Random
+				compute_run(&cp, time, &grid)
+			} else if demo_mode == 5 {
+				compute_run(&cp, time, &grid)
+			}
+		}
+
 		// Cycle compute sub-mode with G
 		if demo_mode == 5 && rl.IsKeyPressed(.G) {
 			compute_cycle_mode(&cp)
@@ -186,7 +205,7 @@ main :: proc() {
 		if rl.IsKeyPressed(.F2) { cfg.show_cell_coords = !cfg.show_cell_coords }
 		if rl.IsKeyPressed(.F3) && demo_mode == 3 { cfg.show_depth = !cfg.show_depth }
 		if rl.IsKeyPressed(.F4) { gpu_cycle_fx(&gpu) }
-		if rl.IsKeyPressed(.F6) { use_gpu_grid = !use_gpu_grid }
+		if rl.IsKeyPressed(.F6) { render_path = RenderPath((int(render_path) + 1) % RENDER_PATH_COUNT) }
 		if rl.IsKeyPressed(.F12) { export_screenshot() }
 
 		// Save current scene
@@ -214,14 +233,20 @@ main :: proc() {
 			rl.ClearBackground(rl.BLACK)
 		}
 
-		if demo_mode == 5 && cp.enabled {
-			// Compute mode: render GPU texture directly — zero CPU
-			compute_render_direct(&cp, &grid)
-		} else if use_gpu_grid && gg.enabled {
+		switch render_path {
+		case .CPU:
+			render_grid(&grid, font)
+		case .Hybrid:
 			gpu_grid_upload(&gg, &grid)
 			gpu_grid_render(&gg, &grid, font)
-		} else {
-			render_grid(&grid, font)
+		case .GPU:
+			has_compute := (demo_mode == 0 || demo_mode == 5) && cp.enabled
+			if has_compute {
+				compute_render_direct(&cp, &grid)
+			} else {
+				gpu_grid_upload(&gg, &grid)
+				gpu_grid_render(&gg, &grid, font)
+			}
 		}
 		if cfg.show_grid_lines { debug_grid_lines(&grid) }
 		if cfg.show_cell_coords { debug_cell_coords(&grid, font) }
@@ -299,7 +324,12 @@ main :: proc() {
 			fmt.bprintf(fx_buf[:], "PostFX: %s\x00", fx_names[gpu.active_fx])
 			imgui.Text(cstring(raw_data(fx_buf[:])))
 
-			renderer_str: cstring = use_gpu_grid ? "GPU (1 draw)" : "CPU"
+			path_names := [RenderPath]cstring{
+				.CPU    = "CPU",
+				.Hybrid = "Hybrid (CPU+GPU)",
+				.GPU    = "GPU",
+			}
+			renderer_str := path_names[render_path]
 			ren_buf: [32]u8
 			fmt.bprintf(ren_buf[:], "Renderer: %s\x00", renderer_str)
 			imgui.Text(cstring(raw_data(ren_buf[:])))
