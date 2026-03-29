@@ -28,5 +28,7 @@ void main() {
     // Generate random color per cell, changes with time on SPACE press
     vec3 fg = hashColor(cellCoord, floor(time));
 
-    finalColor = vec4(fg, 1.0);
+    // Pick random block character per cell
+    int charIdx = int(hash(cellCoord + floor(time) * 7.3) * 31.0);
+    finalColor = vec4(fg, float(charIdx) / 255.0);
 }

@@ -148,5 +148,16 @@ void main() {
         color = mix(color, vec3(0.08, 0.08, 0.1), fog);
     }
 
-    finalColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+    vec3 c = clamp(color, 0.0, 1.0);
+    float brightness = dot(c, vec3(0.299, 0.587, 0.114));
+
+    // Pick block character from brightness: 0=█, 1=▓, 2=▒, 3=░
+    int charIdx = 0;
+    if (brightness > 0.875) charIdx = 0;
+    else if (brightness > 0.625) charIdx = 1;
+    else if (brightness > 0.375) charIdx = 2;
+    else if (brightness > 0.125) charIdx = 3;
+    else charIdx = 0;
+
+    finalColor = vec4(c, float(charIdx) / 255.0);
 }

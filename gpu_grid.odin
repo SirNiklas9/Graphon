@@ -24,6 +24,7 @@ GPUGrid :: struct {
 	atlas_size_loc:   i32,
 	fidelity_loc:     i32,
 	compute_mode_loc: i32,
+	glyph_rect_locs: [32]i32,
 }
 
 gpu_grid_create :: proc(cols, rows: int) -> GPUGrid {
@@ -47,6 +48,10 @@ gpu_grid_create :: proc(cols, rows: int) -> GPUGrid {
 	gg.atlas_size_loc = rl.GetShaderLocation(gg.shader, "atlasSize")
 	gg.fidelity_loc = rl.GetShaderLocation(gg.shader, "fidelityLevel")
 	gg.compute_mode_loc = rl.GetShaderLocation(gg.shader, "computeMode")
+
+	for i in 0 ..< 32 {
+		gg.glyph_rect_locs[i] = rl.GetShaderLocation(gg.shader, rl.TextFormat("glyphRects[%d]", i32(i)))
+	}
 
 	gpu_grid_alloc(&gg, cols, rows)
 	gg.enabled = true
@@ -139,7 +144,7 @@ gpu_grid_upload :: proc(gg: ^GPUGrid, grid: ^Grid) {
 }
 
 // Render entire grid in one draw call with glyph rendering
-gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bool = false) {
+gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bool = false, override_tex: rl.Texture2D = {}) {
 	if !gg.enabled do return
 
 	res := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
@@ -160,14 +165,13 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bo
 	cm := i32(is_compute ? 1 : 0)
 	rl.SetShaderValue(gg.shader, gg.compute_mode_loc, &cm, .INT)
 
-	// Upload glyph rectangles
+	// Upload glyph rectangles (cached locations)
 	chars := ALL_CODEPOINTS
 	for i in 0 ..< 32 {
 		gi := rl.GetGlyphIndex(font, chars[i])
 		rec := font.recs[gi]
 		glyph_rect := [4]f32{rec.x, rec.y, rec.width, rec.height}
-		loc := rl.GetShaderLocation(gg.shader, rl.TextFormat("glyphRects[%d]", i32(i)))
-		rl.SetShaderValue(gg.shader, loc, &glyph_rect, .VEC4)
+		rl.SetShaderValue(gg.shader, gg.glyph_rect_locs[i], &glyph_rect, .VEC4)
 	}
 
 	// Bind bg to unit 1, font atlas to unit 2
@@ -185,7 +189,7 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bo
 	rlgl.ActiveTextureSlot(0)
 
 	// Choose source texture — either our packed fg texture or an external compute texture
-	draw_tex := gg.fg_tex
+	draw_tex := override_tex.id != 0 ? override_tex : gg.fg_tex
 
 	rl.BeginShaderMode(gg.shader)
 	src := rl.Rectangle{0, 0, f32(draw_tex.width), f32(draw_tex.height)}

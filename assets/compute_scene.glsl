@@ -92,5 +92,12 @@ void main() {
     float noise = hash(cellCoord + floor(time * 60.0)) * 0.03;
     color += noise;
 
-    finalColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+    vec3 c = clamp(color, 0.0, 1.0);
+    float b = dot(c, vec3(0.299, 0.587, 0.114));
+    int charIdx = 0;
+    if (b > 0.875) charIdx = 0;
+    else if (b > 0.625) charIdx = 1;
+    else if (b > 0.375) charIdx = 2;
+    else if (b > 0.125) charIdx = 3;
+    finalColor = vec4(c, float(charIdx) / 255.0);
 }

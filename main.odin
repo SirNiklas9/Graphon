@@ -247,8 +247,9 @@ main :: proc() {
 			gpu_grid_render(&gg, &grid, font)
 		case .GPU:
 			if cp.enabled {
-				// Compute: direct GPU render (fast, no readback)
-				compute_render_direct(&cp, &grid)
+				// Compute output has char indices in alpha — render with GPU grid shader + glyphs
+				// The compute RenderTexture is Y-flipped, so we need to handle that
+				gpu_grid_render(&gg, &grid, font, true, cp.target.texture)
 			} else {
 				gpu_grid_upload(&gg, &grid)
 				gpu_grid_render(&gg, &grid, font)

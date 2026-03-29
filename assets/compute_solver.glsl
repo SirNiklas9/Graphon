@@ -39,5 +39,12 @@ void main() {
         result = bg * fg;
     }
 
-    finalColor = vec4(clamp(result, 0.0, 1.0), 1.0);
+    vec3 c = clamp(result, 0.0, 1.0);
+    // Solver: char based on opacity (horizontal gradient)
+    int charIdx = 0;
+    if (opacity > 0.875) charIdx = 0;
+    else if (opacity > 0.625) charIdx = 1;
+    else if (opacity > 0.375) charIdx = 2;
+    else if (opacity > 0.125) charIdx = 3;
+    finalColor = vec4(c, float(charIdx) / 255.0);
 }
