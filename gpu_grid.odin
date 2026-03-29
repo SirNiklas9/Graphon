@@ -151,25 +151,31 @@ gpu_grid_upload :: proc(gg: ^GPUGrid, grid: ^Grid) {
 }
 
 // Render entire grid in one draw call with glyph rendering
-gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bool = false, override_tex: rl.Texture2D = {}) {
+gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bool = false, override_tex: rl.Texture2D = {}, compute_cols: int = 0, compute_rows: int = 0) {
 	if !gg.enabled do return
 
 	// Only re-upload static uniforms when grid/font changes
-	grid_changed := grid.cols != gg.cached_cols || grid.rows != gg.cached_rows
+	// Use compute resolution when in compute mode
+	effective_cols := is_compute && compute_cols > 0 ? compute_cols : grid.cols
+	effective_rows := is_compute && compute_rows > 0 ? compute_rows : grid.rows
+	effective_cell_w := f32(rl.GetScreenWidth()) / f32(effective_cols)
+	effective_cell_h := f32(rl.GetScreenHeight()) / f32(effective_rows)
+
+	grid_changed := effective_cols != gg.cached_cols || effective_rows != gg.cached_rows
 	font_changed := font.texture.id != gg.cached_font_id
 
 	if grid_changed || !gg.statics_uploaded {
 		res := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
 		rl.SetShaderValue(gg.shader, gg.resolution_loc, &res, .VEC2)
 
-		gs := [2]f32{f32(grid.cols), f32(grid.rows)}
+		gs := [2]f32{f32(effective_cols), f32(effective_rows)}
 		rl.SetShaderValue(gg.shader, gg.grid_size_loc, &gs, .VEC2)
 
-		cs := [2]f32{grid.cell_w, grid.cell_h}
+		cs := [2]f32{effective_cell_w, effective_cell_h}
 		rl.SetShaderValue(gg.shader, gg.cell_size_loc, &cs, .VEC2)
 
-		gg.cached_cols = grid.cols
-		gg.cached_rows = grid.rows
+		gg.cached_cols = effective_cols
+		gg.cached_rows = effective_rows
 		gg.statics_uploaded = true
 	}
 
