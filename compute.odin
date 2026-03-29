@@ -2,6 +2,7 @@ package main
 
 import rl "vendor:raylib"
 import rlgl "vendor:raylib/rlgl"
+import "core:math"
 
 // GPU compute pipeline — one shader per demo mode
 // Each shader generates cell colors entirely on GPU
@@ -56,7 +57,16 @@ compute_create :: proc(cols, rows: int) -> ComputePipeline {
 		}
 	}
 
-	cp.target = rl.LoadRenderTexture(i32(cols), i32(rows))
+	// Cap initial resolution
+	total := cols * rows
+	if total > COMPUTE_MAX_PIXELS {
+		ratio := f32(COMPUTE_MAX_PIXELS) / f32(total)
+		scale := math.sqrt(ratio)
+		cp.cols = max(int(f32(cols) * scale), 1)
+		cp.rows = max(int(f32(rows) * scale), 1)
+	}
+
+	cp.target = rl.LoadRenderTexture(i32(cp.cols), i32(cp.rows))
 	rl.SetTextureFilter(cp.target.texture, .POINT)
 
 	// Cache mode-specific locations
@@ -83,13 +93,27 @@ compute_destroy :: proc(cp: ^ComputePipeline) {
 	}
 }
 
+// Max compute resolution — raymarching at full grid res is too expensive
+COMPUTE_MAX_PIXELS :: 640 * 360
+
 compute_resize :: proc(cp: ^ComputePipeline, cols, rows: int) {
 	if cp.target.id != 0 {
 		rl.UnloadRenderTexture(cp.target)
 	}
-	cp.cols = cols
-	cp.rows = rows
-	cp.target = rl.LoadRenderTexture(i32(cols), i32(rows))
+
+	// Cap resolution while maintaining aspect ratio
+	total := cols * rows
+	if total > COMPUTE_MAX_PIXELS {
+		ratio := f32(COMPUTE_MAX_PIXELS) / f32(total)
+		scale := math.sqrt(ratio)
+		cp.cols = max(int(f32(cols) * scale), 1)
+		cp.rows = max(int(f32(rows) * scale), 1)
+	} else {
+		cp.cols = cols
+		cp.rows = rows
+	}
+
+	cp.target = rl.LoadRenderTexture(i32(cp.cols), i32(cp.rows))
 	rl.SetTextureFilter(cp.target.texture, .POINT)
 }
 
