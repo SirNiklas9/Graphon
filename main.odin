@@ -349,9 +349,16 @@ main :: proc() {
 			imgui.Text(cstring(raw_data(ren_buf[:])))
 
 			imgui.Separator()
-			fid_forced: cstring = grid.forced_fidelity ? "FORCED" : "auto"
-			ff_buf: [32]u8
-			fmt.bprintf(ff_buf[:], "Fidelity: %s\x00", fid_forced)
+			fidelity_level_names := [Fidelity]cstring{
+				.FULL_ONLY  = "FULL_ONLY",
+				.DENSITY    = "DENSITY",
+				.HALF       = "HALF",
+				.FRACTIONAL = "FRACTIONAL",
+				.ALL        = "ALL",
+			}
+			fid_mode: cstring = grid.forced_fidelity ? "FORCED" : "auto"
+			ff_buf: [64]u8
+			fmt.bprintf(ff_buf[:], "Fidelity: %s (%s)\x00", fidelity_level_names[grid.fidelity], fid_mode)
 			imgui.Text(cstring(raw_data(ff_buf[:])))
 
 			imgui.Text("F1:Grid F2:Coords F3:Depth")
