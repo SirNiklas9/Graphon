@@ -82,11 +82,6 @@ main :: proc() {
 	time: f32 = 0
 
 	// Lighting
-	scene_lights := lighting_create({40, 40, 50, 255})
-	defer lighting_destroy(&scene_lights)
-	add_directional(&scene_lights, {-0.5, -1, -0.3}, {255, 240, 220, 255}, 0.8)
-	add_point_light(&scene_lights, {0, 6, 0}, {255, 100, 50, 255}, 1.2, 20.0)
-
 	cfg := config_default()
 
 	// Model loading
@@ -536,13 +531,6 @@ fill_primitives_demo :: proc(grid: ^Grid, palette: ^Palette, patterns: ^PatternL
 	}
 }
 
-// Plot a 3D point with lighting applied
-plot_3d_lit :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, lights: ^Lighting, point: rl.Vector3, color: [4]u8, fog_color: [4]u8) {
-	lit := light_point_simple(lights, color, point)
-	plot_3d(grid, db, cam, point, lit, fog_color)
-}
-
-// 3D demo: solid rasterized meshes with lighting
 // Layers demo: 5 layers composited together
 fill_layers_demo :: proc(grid: ^Grid, ls: ^LayerStack, palette: ^Palette, time: f32) {
 	layer_clear_all(ls)

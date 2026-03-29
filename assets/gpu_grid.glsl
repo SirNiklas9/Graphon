@@ -59,10 +59,10 @@ int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
         float hEdge = abs(left - right);
 
         if (brightness > 0.9) return 0;
-        if (vEdge > 0.35 && brightness > 0.4) {
+        if (vEdge > 0.2 && brightness > 0.4) {
             return (above > below) ? 4 : 5; // ▀ or ▄
         }
-        if (hEdge > 0.35 && brightness > 0.4) {
+        if (hEdge > 0.2 && brightness > 0.4) {
             return (left > right) ? 6 : 7;  // ▌ or ▐
         }
         if (brightness > 0.625) return 1;
@@ -81,7 +81,7 @@ int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
         if (brightness > 0.95) return 0; // █
 
         // Vertical edge — use bottom bars (▁▂▃▅▆▇) based on fill amount
-        if (abs(above - below) > 0.35) {
+        if (abs(above - below) > 0.2) {
             float fill = (above > below) ? brightness : (1.0 - brightness);
             fill = clamp(fill, 0.0, 1.0);
             if (fill > 0.85) return 0;     // █
@@ -95,7 +95,7 @@ int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
         }
 
         // Horizontal edge — use left bars (▉▊▋▍▎▏)
-        if (abs(left - right) > 0.35) {
+        if (abs(left - right) > 0.2) {
             float fill = (left > right) ? brightness : (1.0 - brightness);
             fill = clamp(fill, 0.0, 1.0);
             if (fill > 0.85) return 0;     // █
@@ -144,7 +144,7 @@ int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
         int qCount = (qTL ? 1 : 0) + (qTR ? 1 : 0) + (qBL ? 1 : 0) + (qBR ? 1 : 0);
 
         // Strong quadrant pattern — only at real edges (high spread)
-        if (qCount >= 1 && qCount <= 3 && spread > 0.3 && brightness > 0.15 && brightness < 0.85) {
+        if (qCount >= 1 && qCount <= 3 && spread > 0.15 && brightness > 0.1 && brightness < 0.9) {
             // ▖▗▘▝ — single quadrant
             if (qCount == 1) {
                 if (qBL) return 22; // ▖
@@ -173,7 +173,7 @@ int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
         float vEdge = abs(above - below);
         float hEdge = abs(left - right);
 
-        if (vEdge > 0.35) {
+        if (vEdge > 0.2) {
             float fill = brightness;
             if (fill > 0.85) return 0;
             if (fill > 0.72) return 13;
@@ -184,7 +184,7 @@ int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
             if (fill > 0.1)  return 8;
         }
 
-        if (hEdge > 0.35) {
+        if (hEdge > 0.2) {
             float fill = brightness;
             if (fill > 0.85) return 0;
             if (fill > 0.72) return 14;
@@ -272,14 +272,8 @@ void main() {
     // Final color
     if (computeMode == 1) {
         // Compute mode: density chars (0-3) get near-full brightness, edge chars get modulation
-        float intensity;
-        if (idx <= 3) {
-            // Density chars — subtle texture, mostly solid
-            intensity = 0.92 + 0.08 * coverage;
-        } else {
-            // Edge/quarter/fractional chars — more visible texture
-            intensity = 0.7 + 0.3 * coverage;
-        }
+        // All chars get visible modulation — the Grafel aesthetic IS the characters
+        float intensity = 0.65 + 0.35 * coverage;
         finalColor = vec4(fg * intensity, 1.0);
     } else {
         // Hybrid mode: mix bg and fg based on glyph shape
