@@ -59,10 +59,10 @@ int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
         float hEdge = abs(left - right);
 
         if (brightness > 0.9) return 0;
-        if (vEdge > 0.2 && brightness > 0.4) {
+        if (vEdge > 0.35 && brightness > 0.4) {
             return (above > below) ? 4 : 5; // ▀ or ▄
         }
-        if (hEdge > 0.2 && brightness > 0.4) {
+        if (hEdge > 0.35 && brightness > 0.4) {
             return (left > right) ? 6 : 7;  // ▌ or ▐
         }
         if (brightness > 0.625) return 1;
@@ -81,7 +81,7 @@ int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
         if (brightness > 0.95) return 0; // █
 
         // Vertical edge — use bottom bars (▁▂▃▅▆▇) based on fill amount
-        if (abs(above - below) > 0.15) {
+        if (abs(above - below) > 0.35) {
             float fill = (above > below) ? brightness : (1.0 - brightness);
             fill = clamp(fill, 0.0, 1.0);
             if (fill > 0.85) return 0;     // █
@@ -95,7 +95,7 @@ int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
         }
 
         // Horizontal edge — use left bars (▉▊▋▍▎▏)
-        if (abs(left - right) > 0.15) {
+        if (abs(left - right) > 0.35) {
             float fill = (left > right) ? brightness : (1.0 - brightness);
             fill = clamp(fill, 0.0, 1.0);
             if (fill > 0.85) return 0;     // █
@@ -135,15 +135,16 @@ int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
         float quadBR = (br + below + right + brightness) * 0.25;
 
         float avg = (quadTL + quadTR + quadBL + quadBR) * 0.25;
-        bool qTL = quadTL > avg;
-        bool qTR = quadTR > avg;
-        bool qBL = quadBL > avg;
-        bool qBR = quadBR > avg;
+        float spread = max(max(quadTL, quadTR), max(quadBL, quadBR)) - min(min(quadTL, quadTR), min(quadBL, quadBR));
+        bool qTL = quadTL > avg + 0.05;
+        bool qTR = quadTR > avg + 0.05;
+        bool qBL = quadBL > avg + 0.05;
+        bool qBR = quadBR > avg + 0.05;
 
         int qCount = (qTL ? 1 : 0) + (qTR ? 1 : 0) + (qBL ? 1 : 0) + (qBR ? 1 : 0);
 
-        // Strong quadrant pattern — use quarter blocks
-        if (qCount >= 1 && qCount <= 3 && brightness > 0.15 && brightness < 0.85) {
+        // Strong quadrant pattern — only at real edges (high spread)
+        if (qCount >= 1 && qCount <= 3 && spread > 0.3 && brightness > 0.15 && brightness < 0.85) {
             // ▖▗▘▝ — single quadrant
             if (qCount == 1) {
                 if (qBL) return 22; // ▖
@@ -168,11 +169,11 @@ int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
             }
         }
 
-        // Fallback to fractional bars for edges
+        // Fractional bars only at strong edges (object boundaries, not lighting gradients)
         float vEdge = abs(above - below);
         float hEdge = abs(left - right);
 
-        if (vEdge > 0.1) {
+        if (vEdge > 0.35) {
             float fill = brightness;
             if (fill > 0.85) return 0;
             if (fill > 0.72) return 13;
@@ -183,7 +184,7 @@ int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
             if (fill > 0.1)  return 8;
         }
 
-        if (hEdge > 0.1) {
+        if (hEdge > 0.35) {
             float fill = brightness;
             if (fill > 0.85) return 0;
             if (fill > 0.72) return 14;
