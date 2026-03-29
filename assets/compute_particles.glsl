@@ -72,5 +72,5 @@ void main() {
     else if (b > 0.625) charIdx = 1;
     else if (b > 0.375) charIdx = 2;
     else if (b > 0.125) charIdx = 3;
-    finalColor = vec4(c, float(charIdx) / 255.0);
+    finalColor = vec4(c, 1.0);
 }

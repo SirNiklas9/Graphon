@@ -159,5 +159,5 @@ void main() {
     else if (brightness > 0.125) charIdx = 3;
     else charIdx = 0;
 
-    finalColor = vec4(c, float(charIdx) / 255.0);
+    finalColor = vec4(c, 1.0);
 }

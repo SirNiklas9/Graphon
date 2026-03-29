@@ -247,13 +247,7 @@ main :: proc() {
 			gpu_grid_render(&gg, &grid, font)
 		case .GPU:
 			if cp.enabled {
-				if grid.cell_w <= 4 || grid.fidelity == .FULL_ONLY {
-					// Small cells — glyphs invisible, use fast direct render
-					compute_render_direct(&cp, &grid)
-				} else {
-					// Large cells — render with block character glyphs
-					gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
-				}
+				compute_render_direct(&cp, &grid)
 			} else {
 				gpu_grid_upload(&gg, &grid)
 				gpu_grid_render(&gg, &grid, font)

@@ -190,9 +190,7 @@ compute_readback :: proc(cp: ^ComputePipeline, grid: ^Grid) {
 compute_render_direct :: proc(cp: ^ComputePipeline, grid: ^Grid) {
 	if !cp.enabled do return
 	// Disable alpha blending — compute textures store char index in alpha, not transparency
-	rlgl.DisableColorBlend()
 	src := rl.Rectangle{0, 0, f32(cp.target.texture.width), -f32(cp.target.texture.height)}
 	dst := rl.Rectangle{0, 0, f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
 	rl.DrawTexturePro(cp.target.texture, src, dst, {0, 0}, 0, rl.WHITE)
-	rlgl.EnableColorBlend()
 }

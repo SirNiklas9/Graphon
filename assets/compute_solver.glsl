@@ -46,5 +46,5 @@ void main() {
     else if (opacity > 0.625) charIdx = 1;
     else if (opacity > 0.375) charIdx = 2;
     else if (opacity > 0.125) charIdx = 3;
-    finalColor = vec4(c, float(charIdx) / 255.0);
+    finalColor = vec4(c, 1.0);
 }

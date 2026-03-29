@@ -30,5 +30,5 @@ void main() {
 
     // Pick random block character per cell
     int charIdx = int(hash(cellCoord + floor(time) * 7.3) * 31.0);
-    finalColor = vec4(fg, float(charIdx) / 255.0);
+    finalColor = vec4(fg, 1.0);
 }
