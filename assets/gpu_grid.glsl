@@ -251,6 +251,12 @@ void main() {
         return;
     }
 
+    // Hybrid mode: if fg == bg (solid cell), skip glyph — prevents grid line artifacts
+    if (computeMode == 0 && abs(fg.r - bg.r) < 0.01 && abs(fg.g - bg.g) < 0.01 && abs(fg.b - bg.b) < 0.01) {
+        finalColor = vec4(fg, 1.0);
+        return;
+    }
+
     // Glyph rectangle in font atlas
     vec4 rect = glyphRects[idx];
     if (rect.z < 1.0 || rect.w < 1.0) {
