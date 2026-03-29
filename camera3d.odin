@@ -138,7 +138,8 @@ plot_3d :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, point: rl.Vector3, 
 	fog_factor := clamp((depth - fog_start) / (fog_end - fog_start), 0.0, 1.0)
 	fogged := transmute([4]u8)rl.ColorLerp(transmute(rl.Color)color, transmute(rl.Color)fog_color, fog_factor)
 
-	grid_set(grid, col, row, Grafel{char = '█', fg = fogged, bg = fogged})
+	brightness := (f32(fogged[0]) * 0.299 + f32(fogged[1]) * 0.587 + f32(fogged[2]) * 0.114) / 255.0
+	grid_set(grid, col, row, solve_cell(fogged, brightness, fog_color))
 }
 
 // Volume — a 3D region with fog/ambient properties
