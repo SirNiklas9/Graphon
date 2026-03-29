@@ -93,6 +93,10 @@ main :: proc() {
 	suzanne := model_load("assets/suzanne.obj")
 	defer model_destroy(&suzanne)
 
+	// GPU 3D scene renderer (Raylib native 3D → Grafel glyph shader)
+	scene3d := scene3d_create(grid.cols, grid.rows)
+	defer scene3d_destroy(&scene3d)
+
 	// GPU pipeline (post-process)
 	gpu := gpu_create(SCREEN_W, SCREEN_H)
 	defer gpu_destroy(&gpu)
@@ -113,7 +117,7 @@ main :: proc() {
 		// Update mouse
 		mouse_update(&mouse, &grid)
 		// Font size adjustment
-		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer, ls: ^LayerStack, gg_ptr: ^GPUGrid, cp_ptr: ^ComputePipeline, render_path: RenderPath) {
+		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer, ls: ^LayerStack, gg_ptr: ^GPUGrid, cp_ptr: ^ComputePipeline, render_path: RenderPath, s3d: ^Scene3D = nil) {
 			resize_font(grid, font, new_size, demo_mode, palette, blend, patterns)
 			// Only resize heavy CPU buffers when not in GPU-only mode
 			if render_path != .GPU || grid.cols * grid.rows < 500000 {
@@ -122,18 +126,19 @@ main :: proc() {
 			}
 			gpu_grid_resize(gg_ptr, grid.cols, grid.rows)
 			compute_resize(cp_ptr, grid.cols, grid.rows)
+			if s3d != nil { scene3d_resize(s3d, grid.cols, grid.rows) }
 		}
 		if rl.IsKeyPressed(.UP) {
-			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path)
+			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path, &scene3d)
 		}
 		if rl.IsKeyPressed(.DOWN) {
-			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path)
+			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path, &scene3d)
 		}
 		if rl.IsKeyPressed(.LEFT) {
-			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path)
+			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path, &scene3d)
 		}
 		if rl.IsKeyPressed(.RIGHT) {
-			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path)
+			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path, &scene3d)
 		}
 
 		// Cycle demo mode: 0=random, 1=solver, 2=primitives, 3=3D, 4=layers, 5=compute
@@ -155,7 +160,15 @@ main :: proc() {
 			}
 			is_compute_mode := demo_mode >= 5
 			if (render_path == .GPU || is_compute_mode) && cp.enabled {
-				compute_run(&cp, demo_mode, time, &grid, int(demo_blend), &cam)
+				if demo_mode == 3 {
+					// 3D mode on GPU: use Raylib's native 3D renderer
+					scene_objects := [1]Scene3DObject{
+						{model = &suzanne, position = {-5, 2, 0}, scale = 2.0, auto_rotate = true, rotate_speed = 0.5, tint = {255, 165, 50, 255}},
+					}
+					scene3d_render(&scene3d, &cam, scene_objects[:], time)
+				} else {
+					compute_run(&cp, demo_mode, time, &grid, int(demo_blend), &cam)
+				}
 			}
 			if render_path != .GPU && !is_compute_mode {
 				if demo_mode == 3 {
@@ -246,26 +259,40 @@ main :: proc() {
 			rl.ClearBackground(rl.BLACK)
 		}
 
-		// GPU-only modes (5=Compute, 6=Showcase) always use compute path
+		// Determine which GPU texture to use
 		is_gpu_only_mode := demo_mode >= 5
+		is_3d_gpu := demo_mode == 3 && render_path == .GPU
+
+		// Pick the right texture source
+		gpu_tex: rl.Texture2D
+		gpu_cols, gpu_rows: int
+		if is_3d_gpu && scene3d.enabled {
+			gpu_tex = scene3d.target.texture
+			gpu_cols = scene3d.cols
+			gpu_rows = scene3d.rows
+		} else if cp.enabled {
+			gpu_tex = cp.target.texture
+			gpu_cols = cp.cols
+			gpu_rows = cp.rows
+		}
 
 		switch render_path {
 		case .CPU:
-			if is_gpu_only_mode && cp.enabled {
-				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
+			if is_gpu_only_mode && gpu_tex.id != 0 {
+				gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
 			} else {
 				render_grid(&grid, font)
 			}
 		case .Hybrid:
-			if is_gpu_only_mode && cp.enabled {
-				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
+			if is_gpu_only_mode && gpu_tex.id != 0 {
+				gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
 			} else {
 				gpu_grid_upload(&gg, &grid)
 				gpu_grid_render(&gg, &grid, font)
 			}
 		case .GPU:
-			if cp.enabled {
-				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
+			if gpu_tex.id != 0 {
+				gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
 			} else {
 				gpu_grid_upload(&gg, &grid)
 				gpu_grid_render(&gg, &grid, font)
