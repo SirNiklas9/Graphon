@@ -16,13 +16,14 @@ GPUGrid :: struct {
 	enabled:    bool,
 
 	// Uniform locations
-	bg_loc:         i32,
-	atlas_loc:      i32,
-	resolution_loc: i32,
-	grid_size_loc:  i32,
-	cell_size_loc:  i32,
-	atlas_size_loc: i32,
-	fidelity_loc:   i32,
+	bg_loc:           i32,
+	atlas_loc:        i32,
+	resolution_loc:   i32,
+	grid_size_loc:    i32,
+	cell_size_loc:    i32,
+	atlas_size_loc:   i32,
+	fidelity_loc:     i32,
+	compute_mode_loc: i32,
 }
 
 gpu_grid_create :: proc(cols, rows: int) -> GPUGrid {
@@ -45,6 +46,7 @@ gpu_grid_create :: proc(cols, rows: int) -> GPUGrid {
 	gg.cell_size_loc = rl.GetShaderLocation(gg.shader, "cellSize")
 	gg.atlas_size_loc = rl.GetShaderLocation(gg.shader, "atlasSize")
 	gg.fidelity_loc = rl.GetShaderLocation(gg.shader, "fidelityLevel")
+	gg.compute_mode_loc = rl.GetShaderLocation(gg.shader, "computeMode")
 
 	gpu_grid_alloc(&gg, cols, rows)
 	gg.enabled = true
@@ -137,7 +139,7 @@ gpu_grid_upload :: proc(gg: ^GPUGrid, grid: ^Grid) {
 }
 
 // Render entire grid in one draw call with glyph rendering
-gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font) {
+gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bool = false) {
 	if !gg.enabled do return
 
 	res := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
@@ -154,6 +156,9 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font) {
 
 	fid := i32(grid.fidelity)
 	rl.SetShaderValue(gg.shader, gg.fidelity_loc, &fid, .INT)
+
+	cm := i32(is_compute ? 1 : 0)
+	rl.SetShaderValue(gg.shader, gg.compute_mode_loc, &cm, .INT)
 
 	// Upload glyph rectangles
 	chars := ALL_CODEPOINTS
@@ -179,10 +184,13 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font) {
 	rlgl.EnableTexture(font.texture.id)
 	rlgl.ActiveTextureSlot(0)
 
+	// Choose source texture — either our packed fg texture or an external compute texture
+	draw_tex := gg.fg_tex
+
 	rl.BeginShaderMode(gg.shader)
-	src := rl.Rectangle{0, 0, f32(gg.fg_tex.width), f32(gg.fg_tex.height)}
+	src := rl.Rectangle{0, 0, f32(draw_tex.width), f32(draw_tex.height)}
 	dst := rl.Rectangle{0, 0, res[0], res[1]}
-	rl.DrawTexturePro(gg.fg_tex, src, dst, {0, 0}, 0, rl.WHITE)
+	rl.DrawTexturePro(draw_tex, src, dst, {0, 0}, 0, rl.WHITE)
 	rl.EndShaderMode()
 
 	rlgl.DrawRenderBatchActive()

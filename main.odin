@@ -247,6 +247,7 @@ main :: proc() {
 			gpu_grid_render(&gg, &grid, font)
 		case .GPU:
 			if cp.enabled {
+				// Compute: direct GPU render (fast, no readback)
 				compute_render_direct(&cp, &grid)
 			} else {
 				gpu_grid_upload(&gg, &grid)

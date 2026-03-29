@@ -126,6 +126,29 @@ compute_run :: proc(cp: ^ComputePipeline, demo_mode: int, time_val: f32, grid: ^
 	rl.EndTextureMode()
 }
 
+// Read back compute output into the Grafel buffer (for GPU grid glyph rendering)
+compute_readback :: proc(cp: ^ComputePipeline, grid: ^Grid) {
+	if !cp.enabled do return
+
+	img := rl.LoadImageFromTexture(cp.target.texture)
+	defer rl.UnloadImage(img)
+
+	cols := min(cp.cols, grid.cols)
+	rows := min(cp.rows, grid.rows)
+
+	for row in 0 ..< rows {
+		src_row := cp.rows - 1 - row // RenderTexture Y flip
+		for col in 0 ..< cols {
+			c := rl.GetImageColor(img, i32(col), i32(src_row))
+			grid.cells[row * grid.cols + col] = Grafel{
+				char = '█',
+				fg   = {c.r, c.g, c.b, 255},
+				bg   = {c.r, c.g, c.b, 255},
+			}
+		}
+	}
+}
+
 // Render compute output directly to screen — GPU to GPU
 compute_render_direct :: proc(cp: ^ComputePipeline, grid: ^Grid) {
 	if !cp.enabled do return
