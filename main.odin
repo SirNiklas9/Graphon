@@ -163,9 +163,12 @@ main :: proc() {
 			if (render_path == .GPU || is_compute_mode) && cp.enabled && demo_mode != 3 {
 				compute_run(&cp, demo_mode, time, &grid, int(demo_blend), &cam)
 			}
-			// CPU rasterizer for 3D mode (all render paths — identical look)
+			// 3D mode: Raylib native GPU renderer → identical across all display paths
 			if demo_mode == 3 {
-				fill_3d_demo(&grid, &db, &cam, &palette, &scene_lights, time, &suzanne)
+				scene_objects := [1]Scene3DObject{
+					{model = &suzanne, position = {-5, 2, 0}, scale = 2.0, auto_rotate = true, rotate_speed = 0.5, tint = {255, 165, 50, 255}},
+				}
+				scene3d_render(&scene3d, &cam, scene_objects[:], time)
 			}
 			if render_path != .GPU && !is_compute_mode && demo_mode != 3 {
 				if demo_mode == 4 {
@@ -253,28 +256,44 @@ main :: proc() {
 			rl.ClearBackground(rl.BLACK)
 		}
 
+		// Determine GPU texture source
 		is_gpu_only_mode := demo_mode >= 5
-		has_compute_tex := is_gpu_only_mode && cp.enabled && cp.target.texture.id != 0
+		has_gpu_tex := false
+		gpu_tex: rl.Texture2D
+		gpu_cols, gpu_rows: int
+
+		if demo_mode == 3 && scene3d.enabled {
+			// 3D mode: Raylib rendered scene
+			has_gpu_tex = true
+			gpu_tex = scene3d.target.texture
+			gpu_cols = scene3d.cols
+			gpu_rows = scene3d.rows
+		} else if is_gpu_only_mode && cp.enabled && cp.target.texture.id != 0 {
+			// Compute modes
+			has_gpu_tex = true
+			gpu_tex = cp.target.texture
+			gpu_cols = cp.cols
+			gpu_rows = cp.rows
+		}
 
 		switch render_path {
 		case .CPU:
-			if has_compute_tex {
-				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
+			if has_gpu_tex {
+				gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
 			} else {
 				render_grid(&grid, font)
 			}
 		case .Hybrid:
-			if has_compute_tex {
-				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
+			if has_gpu_tex {
+				gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
 			} else {
 				gpu_grid_upload(&gg, &grid)
 				gpu_grid_render(&gg, &grid, font)
 			}
 		case .GPU:
-			if has_compute_tex {
-				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
+			if has_gpu_tex {
+				gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
 			} else {
-				// 3D and other CPU-filled modes: upload grid and display with GPU glyphs
 				gpu_grid_upload(&gg, &grid)
 				gpu_grid_render(&gg, &grid, font)
 			}
