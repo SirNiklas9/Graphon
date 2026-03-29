@@ -251,8 +251,9 @@ void main() {
         return;
     }
 
-    // Hybrid mode: if fg == bg (solid cell), skip glyph — prevents grid line artifacts
-    if (computeMode == 0 && abs(fg.r - bg.r) < 0.01 && abs(fg.g - bg.g) < 0.01 && abs(fg.b - bg.b) < 0.01) {
+    // Hybrid mode: if fg ≈ bg (solid or near-solid cell), render as solid — prevents grid artifacts
+    float fgbgDiff = abs(fg.r - bg.r) + abs(fg.g - bg.g) + abs(fg.b - bg.b);
+    if (computeMode == 0 && fgbgDiff < 0.15) {
         finalColor = vec4(fg, 1.0);
         return;
     }
