@@ -13,16 +13,19 @@ Scene3D :: struct {
 }
 
 scene3d_create :: proc(cols, rows: int) -> Scene3D {
-	// Cap resolution like compute pipeline
-	MAX_PIXELS :: 640 * 360
-	c, r := cols, rows
-	total := c * r
-	if total > MAX_PIXELS {
-		ratio := f32(MAX_PIXELS) / f32(total)
-		scale := math.sqrt(ratio)
-		c = max(int(f32(c) * scale), 1)
-		r = max(int(f32(r) * scale), 1)
-	}
+	// Use screen aspect ratio, cap total pixels
+	MAX_W :: 960
+	MAX_H :: 540
+	screen_w := f32(rl.GetScreenWidth())
+	screen_h := f32(rl.GetScreenHeight())
+	aspect := screen_w / max(screen_h, 1)
+
+	c := min(cols, MAX_W)
+	r := int(f32(c) / aspect)
+	r = min(r, MAX_H)
+	c = int(f32(r) * aspect)
+	c = max(c, 1)
+	r = max(r, 1)
 
 	target := rl.LoadRenderTexture(i32(c), i32(r))
 	return Scene3D{target = target, cols = c, rows = r, enabled = true}
