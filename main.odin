@@ -8,8 +8,8 @@ import "core:strings"
 import imgui "lib:odin-imgui"
 import rlimgui "lib:imgui_impl_raylib"
 
-SCREEN_W     :: 2560
-SCREEN_H     :: 1440
+SCREEN_W     :: 1920
+SCREEN_H     :: 1080
 INIT_FONT_SZ :: i32(20)
 FONT_PATH    :: "assets/JetBrainsMonoNLNerdFont-Regular.ttf"
 
