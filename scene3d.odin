@@ -76,7 +76,7 @@ scene3d_render :: proc(
 
 	// Render all scene objects
 	for &obj in models {
-		if !obj.model.loaded do continue
+		if !obj.loaded do continue
 
 		pos := obj.position
 		rot_y := obj.rotation_y
@@ -85,7 +85,7 @@ scene3d_render :: proc(
 		}
 
 		rl.DrawModelEx(
-			obj.model.model,
+			obj.model,
 			pos,
 			{0, 1, 0},          // rotation axis
 			rot_y * 57.2958,     // radians to degrees
@@ -116,7 +116,8 @@ scene3d_render :: proc(
 
 // Object in a 3D scene
 Scene3DObject :: struct {
-	model:        ^GraphonModel,
+	model:        rl.Model,
+	loaded:       bool,
 	position:     rl.Vector3,
 	scale:        f32,
 	rotation_y:   f32,

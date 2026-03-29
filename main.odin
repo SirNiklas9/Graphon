@@ -90,8 +90,8 @@ main :: proc() {
 	cfg := config_default()
 
 	// Model loading
-	suzanne := model_load("assets/suzanne.obj")
-	defer model_destroy(&suzanne)
+	suzanne := rl.LoadModel("assets/suzanne.obj")
+	defer rl.UnloadModel(suzanne)
 
 	// GPU 3D scene renderer (Raylib native 3D → Grafel glyph shader)
 	scene3d := scene3d_create(grid.cols, grid.rows)
@@ -166,7 +166,7 @@ main :: proc() {
 			// 3D mode: Raylib native GPU renderer → identical across all display paths
 			if demo_mode == 3 {
 				scene_objects := [1]Scene3DObject{
-					{model = &suzanne, position = {-5, 2, 0}, scale = 2.0, auto_rotate = true, rotate_speed = 0.5, tint = {255, 165, 50, 255}},
+					{model = suzanne, loaded = suzanne.meshCount > 0, position = {-5, 2, 0}, scale = 2.0, auto_rotate = true, rotate_speed = 0.5, tint = {255, 165, 50, 255}},
 				}
 				scene3d_render(&scene3d, &cam, scene_objects[:], time)
 			}
@@ -536,64 +536,6 @@ plot_3d_lit :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, lights: ^Lighti
 }
 
 // 3D demo: solid rasterized meshes with lighting
-fill_3d_demo :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, palette: ^Palette, lights: ^Lighting, time: f32, suzanne: ^GraphonModel = nil) {
-	fog_color := palette_get(palette, "dark")
-	clear_grid(grid, fog_color)
-	depth_buffer_clear(db)
-
-	green := palette_get(palette, "green")
-	blue := palette_get(palette, "blue")
-	red := palette_get(palette, "red")
-	cyan := palette_get(palette, "cyan")
-	yellow := palette_get(palette, "yellow")
-	white := palette_get(palette, "white")
-	gray := palette_get(palette, "gray")
-
-	// Move the point light in a circle
-	lights.lights[1].position = {math.cos(time * 0.7) * 8, 6, math.sin(time * 0.7) * 8}
-
-	// Ground plane — subdivided for smooth lighting
-	tile_size: f32 = 4
-	for gz: f32 = -20; gz < 20; gz += tile_size {
-		for gx: f32 = -20; gx < 20; gx += tile_size {
-			raster_quad(grid, db, cam,
-				{gx, 0, gz + tile_size},
-				{gx + tile_size, 0, gz + tile_size},
-				{gx + tile_size, 0, gz},
-				{gx, 0, gz},
-				gray, lights, fog_color,
-			)
-		}
-	}
-
-	// Spinning cube — solid rasterized box
-	raster_box_rotated(grid, db, cam,
-		{0, 4, 0}, {4, 4, 4}, red,
-		time,
-		lights, fog_color,
-	)
-
-	// Colored pillars — solid boxes
-	pillar_colors := [4][4]u8{green, blue, cyan, yellow}
-	pillar_positions := [4][2]f32{{-8, -5}, {8, -5}, {-8, 5}, {8, 5}}
-	for i in 0 ..< 4 {
-		px := pillar_positions[i][0]
-		pz := pillar_positions[i][1]
-		raster_box(grid, db, cam,
-			{px, 3, pz}, {1.5, 6, 1.5}, pillar_colors[i],
-			lights, fog_color,
-		)
-	}
-
-	// Suzanne model
-	if suzanne != nil && suzanne.loaded {
-		orange := palette_get(palette, "orange")
-		model_render(suzanne, grid, db, cam, {-5, 2, 0}, 2.0, time * 0.5, orange, lights, fog_color)
-	}
-
-	draw_text(grid, 2, 1, "3D MODE - WASD+MOUSE", white)
-}
-
 // Layers demo: 5 layers composited together
 fill_layers_demo :: proc(grid: ^Grid, ls: ^LayerStack, palette: ^Palette, time: f32) {
 	layer_clear_all(ls)
