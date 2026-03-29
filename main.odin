@@ -89,6 +89,10 @@ main :: proc() {
 
 	cfg := config_default()
 
+	// Model loading
+	suzanne := model_load("assets/suzanne.obj")
+	defer model_destroy(&suzanne)
+
 	// GPU pipeline (post-process)
 	gpu := gpu_create(SCREEN_W, SCREEN_H)
 	defer gpu_destroy(&gpu)
@@ -155,7 +159,7 @@ main :: proc() {
 			}
 			if render_path != .GPU && !is_compute_mode {
 				if demo_mode == 3 {
-					fill_3d_demo(&grid, &db, &cam, &palette, &scene_lights, time)
+					fill_3d_demo(&grid, &db, &cam, &palette, &scene_lights, time, &suzanne)
 				}
 				if demo_mode == 4 {
 					fill_layers_demo(&grid, &ls, &palette, time)
@@ -505,7 +509,7 @@ plot_3d_lit :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, lights: ^Lighti
 }
 
 // 3D demo: solid rasterized meshes with lighting
-fill_3d_demo :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, palette: ^Palette, lights: ^Lighting, time: f32) {
+fill_3d_demo :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, palette: ^Palette, lights: ^Lighting, time: f32, suzanne: ^GraphonModel = nil) {
 	fog_color := palette_get(palette, "dark")
 	clear_grid(grid, fog_color)
 	depth_buffer_clear(db)
@@ -552,6 +556,12 @@ fill_3d_demo :: proc(grid: ^Grid, db: ^DepthBuffer, cam: ^Camera, palette: ^Pale
 			{px, 3, pz}, {1.5, 6, 1.5}, pillar_colors[i],
 			lights, fog_color,
 		)
+	}
+
+	// Suzanne model
+	if suzanne != nil && suzanne.loaded {
+		orange := palette_get(palette, "orange")
+		model_render(suzanne, grid, db, cam, {-5, 2, 0}, 2.0, time * 0.5, orange, lights, fog_color)
 	}
 
 	draw_text(grid, 2, 1, "3D MODE - WASD+MOUSE", white)
