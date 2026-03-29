@@ -93,9 +93,7 @@ raster_triangle :: proc(
 				fog_factor,
 			)
 
-			// Use solver to pick block character from brightness
-			brightness := (f32(final_color[0]) * 0.299 + f32(final_color[1]) * 0.587 + f32(final_color[2]) * 0.114) / 255.0
-			grid_set(grid, col, row, solve_cell(final_color, brightness, fog_color))
+			grid_set(grid, col, row, Grafel{char = '█', fg = final_color, bg = final_color})
 		}
 	}
 }
