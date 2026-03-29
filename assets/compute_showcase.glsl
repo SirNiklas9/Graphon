@@ -6,174 +6,253 @@ out vec4 finalColor;
 uniform float time;
 uniform vec2 gridSize;
 
-float hash(vec2 p) {
-    p = fract(p * vec2(443.8975, 397.2973));
-    p += dot(p.xy, p.yx + 19.19);
-    return fract(p.x * p.y);
+// === 3D Raymarching ===
+float sdBox3D(vec3 p, vec3 b) {
+    vec3 d = abs(p) - b;
+    return length(max(d, 0.0)) + min(max(d.x, max(d.y, d.z)), 0.0);
 }
 
-float sdBox(vec2 p, vec2 b) {
+float sdSphere(vec3 p, float r) { return length(p) - r; }
+float sdPlane(vec3 p, float h) { return p.y - h; }
+
+float sdCylinder(vec3 p, float r, float h) {
+    float d = length(p.xz) - r;
+    return max(d, abs(p.y) - h);
+}
+
+float sdTorus(vec3 p, vec2 t) {
+    vec2 q = vec2(length(p.xz) - t.x, p.y);
+    return length(q) - t.y;
+}
+
+vec3 rotY(vec3 p, float a) {
+    float c = cos(a), s = sin(a);
+    return vec3(c*p.x + s*p.z, p.y, -s*p.x + c*p.z);
+}
+
+struct Hit { float dist; int id; };
+
+Hit scene(vec3 p) {
+    Hit h; h.dist = 1e10; h.id = 0;
+
+    // Ground
+    float ground = sdPlane(p, 0.0);
+    if (ground < h.dist) { h.dist = ground; h.id = 0; }
+
+    // Spinning cube
+    vec3 cp = rotY(p - vec3(0.0, 2.0, 0.0), time * 0.8);
+    float cube = sdBox3D(cp, vec3(1.2));
+    if (cube < h.dist) { h.dist = cube; h.id = 1; }
+
+    // Floating sphere
+    vec3 sp = p - vec3(4.0, 1.5 + sin(time) * 0.5, -2.0);
+    float sphere = sdSphere(sp, 1.0);
+    if (sphere < h.dist) { h.dist = sphere; h.id = 2; }
+
+    // Torus
+    vec3 tp = rotY(p - vec3(-4.0, 1.5, -1.0), time * 0.5);
+    float torus = sdTorus(tp, vec2(1.2, 0.4));
+    if (torus < h.dist) { h.dist = torus; h.id = 3; }
+
+    // 4 pillars
+    vec3 pillarPos[4] = vec3[](
+        vec3(-7.0, 2.5, -5.0), vec3(7.0, 2.5, -5.0),
+        vec3(-7.0, 2.5, 5.0),  vec3(7.0, 2.5, 5.0)
+    );
+    for (int i = 0; i < 4; i++) {
+        float pil = sdCylinder(p - pillarPos[i], 0.5, 2.5);
+        if (pil < h.dist) { h.dist = pil; h.id = 4 + i; }
+    }
+
+    return h;
+}
+
+vec3 calcNormal(vec3 p) {
+    vec2 e = vec2(0.001, 0.0);
+    return normalize(vec3(
+        scene(p + e.xyy).dist - scene(p - e.xyy).dist,
+        scene(p + e.yxy).dist - scene(p - e.yxy).dist,
+        scene(p + e.yyx).dist - scene(p - e.yyx).dist
+    ));
+}
+
+vec3 render3D(vec2 uv) {
+    float aspect = gridSize.x / gridSize.y;
+    uv.x *= aspect;
+
+    // Orbiting camera
+    vec3 ro = vec3(sin(time * 0.2) * 14.0, 7.0, cos(time * 0.2) * 14.0);
+    vec3 target = vec3(0.0, 1.5, 0.0);
+    vec3 forward = normalize(target - ro);
+    vec3 right = normalize(cross(forward, vec3(0.0, 1.0, 0.0)));
+    vec3 up = cross(right, forward);
+    float fov = tan(radians(55.0) * 0.5);
+    vec3 rd = normalize(forward + uv.x * right * fov + uv.y * up * fov);
+
+    // Raymarch
+    float t = 0.0;
+    Hit hit;
+    for (int i = 0; i < 64; i++) {
+        hit = scene(ro + rd * t);
+        if (hit.dist < 0.005) break;
+        t += hit.dist;
+        if (t > 50.0) break;
+    }
+
+    vec3 sky = vec3(0.05, 0.05, 0.08);
+    if (t >= 50.0) return sky;
+
+    vec3 pos = ro + rd * t;
+    vec3 nor = calcNormal(pos);
+
+    // Materials
+    vec3 matColor;
+    if (hit.id == 0) {
+        float checker = mod(floor(pos.x) + floor(pos.z), 2.0);
+        matColor = mix(vec3(0.25), vec3(0.45), checker);
+    } else if (hit.id == 1) { matColor = vec3(0.9, 0.15, 0.1); }
+    else if (hit.id == 2) { matColor = vec3(0.1, 0.6, 0.9); }
+    else if (hit.id == 3) { matColor = vec3(0.9, 0.7, 0.1); }
+    else if (hit.id == 4) { matColor = vec3(0.1, 0.8, 0.2); }
+    else if (hit.id == 5) { matColor = vec3(0.2, 0.3, 0.9); }
+    else if (hit.id == 6) { matColor = vec3(0.8, 0.2, 0.7); }
+    else { matColor = vec3(0.1, 0.8, 0.8); }
+
+    // Lighting
+    vec3 lightDir = normalize(vec3(-0.4, 0.8, 0.3));
+    float diff = max(dot(nor, lightDir), 0.0);
+    float spec = pow(max(dot(reflect(-lightDir, nor), -rd), 0.0), 16.0);
+    float amb = 0.12;
+
+    // Point light
+    vec3 lightPos = vec3(cos(time * 0.6) * 5.0, 3.5, sin(time * 0.6) * 5.0);
+    vec3 toLight = lightPos - pos;
+    float ld = length(toLight);
+    float pDiff = max(dot(nor, toLight / ld), 0.0);
+    float atten = 1.0 / (1.0 + ld * ld * 0.03);
+    vec3 pointCol = vec3(1.0, 0.6, 0.3) * pDiff * atten;
+
+    vec3 color = matColor * (amb + diff * 0.65) + vec3(1.0) * spec * 0.3 + pointCol * 0.4;
+
+    // Fog
+    float fog = 1.0 - exp(-t * 0.025);
+    color = mix(color, sky, fog);
+
+    return color;
+}
+
+// === 2D HUD Elements ===
+float sdBox2D(vec2 p, vec2 b) {
     vec2 d = abs(p) - b;
     return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
 }
 
-float sdCircle(vec2 p, float r) {
-    return length(p) - r;
-}
+vec4 renderHUD(vec2 uv, vec3 sceneColor) {
+    vec3 color = sceneColor;
+    float alpha = 0.0;
 
-// Smooth min for organic blending
-float smin(float a, float b, float k) {
-    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-    return mix(b, a, h) - k * h * (1.0 - h);
-}
+    // Health bar (bottom-left)
+    vec2 hpPos = uv - vec2(0.05, 0.92);
+    float hpBar = sdBox2D(hpPos - vec2(0.1, 0.0), vec2(0.1, 0.012));
+    if (hpBar < 0.0) {
+        float fill = 0.7 + 0.1 * sin(time * 2.0); // pulsing health
+        float barFill = step(hpPos.x, fill * 0.2);
+        color = mix(vec3(0.8, 0.1, 0.1), vec3(0.1, 0.9, 0.2), fill) * barFill;
+        color += vec3(0.15) * (1.0 - barFill);
+        alpha = 0.9;
+    }
+    // Health bar outline
+    float hpOutline = abs(sdBox2D(hpPos - vec2(0.1, 0.0), vec2(0.102, 0.014)));
+    if (hpOutline < 0.003) { color = vec3(0.8); alpha = 0.9; }
 
-// 3D-like sphere with lighting
-float sphere3D(vec2 p, vec2 center, float r) {
-    float d = length(p - center);
-    if (d > r) return 0.0;
-    // Fake 3D: brightness from pseudo-normal
-    float nz = sqrt(1.0 - (d/r) * (d/r));
-    vec2 n2d = (p - center) / r;
-    // Light from upper-left
-    float light = max(dot(vec3(n2d, nz), normalize(vec3(-0.5, -0.6, 0.8))), 0.0);
-    return 0.15 + light * 0.85;
+    // Energy bar (below health)
+    vec2 enPos = uv - vec2(0.05, 0.95);
+    float enBar = sdBox2D(enPos - vec2(0.075, 0.0), vec2(0.075, 0.008));
+    if (enBar < 0.0) {
+        float fill = 0.5 + 0.5 * sin(time * 1.5);
+        float barFill = step(enPos.x, fill * 0.15);
+        color = vec3(0.2, 0.5, 1.0) * barFill + vec3(0.1) * (1.0 - barFill);
+        alpha = 0.85;
+    }
+
+    // Minimap (top-right corner)
+    vec2 mmPos = uv - vec2(0.85, 0.05);
+    float mmBg = sdBox2D(mmPos - vec2(0.065, 0.065), vec2(0.065, 0.065));
+    if (mmBg < 0.0) {
+        color = vec3(0.05, 0.1, 0.05);
+        alpha = 0.8;
+
+        // Minimap dots (objects)
+        vec2 mmUV = (mmPos) / 0.13;
+        float dot1 = length(mmUV - vec2(0.5 + sin(time * 0.2) * 0.3, 0.5 + cos(time * 0.2) * 0.3));
+        if (dot1 < 0.08) { color = vec3(0.0, 1.0, 0.0); }
+
+        // Player dot (center, pulsing)
+        float player = length(mmUV - vec2(0.5, 0.5));
+        if (player < 0.06 + 0.02 * sin(time * 4.0)) { color = vec3(1.0, 1.0, 1.0); }
+
+        // Enemy dots
+        for (int i = 0; i < 3; i++) {
+            float seed = float(i) * 2.1;
+            vec2 ePos = vec2(0.3 + sin(time * 0.5 + seed) * 0.3, 0.3 + cos(time * 0.7 + seed) * 0.3);
+            if (length(mmUV - ePos) < 0.05) { color = vec3(1.0, 0.2, 0.2); }
+        }
+    }
+    // Minimap border
+    float mmBorder = abs(sdBox2D(mmPos - vec2(0.065, 0.065), vec2(0.067, 0.067)));
+    if (mmBorder < 0.003) { color = vec3(0.4, 0.6, 0.4); alpha = 0.9; }
+
+    // Crosshair (center)
+    vec2 chPos = uv - vec2(0.5, 0.5);
+    if ((abs(chPos.x) < 0.015 && abs(chPos.y) < 0.002) ||
+        (abs(chPos.y) < 0.015 && abs(chPos.x) < 0.002)) {
+        if (abs(chPos.x) > 0.004 || abs(chPos.y) > 0.004) {
+            color = vec3(0.9, 0.9, 0.9);
+            alpha = 0.7;
+        }
+    }
+
+    // FPS-style ammo counter (bottom-right)
+    vec2 ammoPos = uv - vec2(0.88, 0.92);
+    float ammoBg = sdBox2D(ammoPos - vec2(0.05, 0.015), vec2(0.05, 0.015));
+    if (ammoBg < 0.0) {
+        // Ammo blocks
+        int ammoCount = 7; // out of 10
+        float blockW = 0.008;
+        for (int i = 0; i < 10; i++) {
+            float bx = float(i) * 0.01 - 0.045;
+            if (abs(ammoPos.x - bx) < blockW * 0.4 && abs(ammoPos.y) < 0.01) {
+                color = i < ammoCount ? vec3(1.0, 0.8, 0.2) : vec3(0.2);
+            }
+        }
+        alpha = 0.85;
+    }
+
+    // Score text area (top-center)
+    if (uv.y < 0.04 && abs(uv.x - 0.5) < 0.08) {
+        float pulse = 0.85 + 0.15 * sin(time * 3.0);
+        float stripe = step(0.4, fract(uv.x * 60.0));
+        color = vec3(1.0, 0.9, 0.7) * pulse * stripe;
+        alpha = 0.75;
+    }
+
+    return vec4(color, alpha);
 }
 
 void main() {
     vec2 tc = vec2(fragTexCoord.x, 1.0 - fragTexCoord.y);
     vec2 cellCoord = floor(tc * gridSize);
     vec2 uv = cellCoord / gridSize;
-    vec2 p = uv * 2.0 - 1.0;
-    float aspect = gridSize.x / gridSize.y;
-    p.x *= aspect;
+    vec2 centered = uv * 2.0 - 1.0;
 
-    vec3 color = vec3(0.0);
+    // Render 3D scene
+    vec3 scene3d = render3D(centered);
 
-    // === BACKGROUND: subtle gradient ===
-    color = vec3(0.02 + uv.y * 0.06, 0.02 + uv.y * 0.04, 0.04 + uv.y * 0.08);
+    // Overlay 2D HUD
+    vec4 hud = renderHUD(uv, scene3d);
 
-    // === SECTION 1 (left): Gradient bars showing density character transitions ===
-    if (uv.x < 0.25) {
-        // Vertical gradient bars in different colors
-        float barWidth = 0.05;
-        int barIdx = int(uv.x / barWidth);
-        vec3 barColors[5] = vec3[](
-            vec3(1.0, 0.2, 0.1),
-            vec3(0.1, 0.8, 0.2),
-            vec3(0.2, 0.4, 1.0),
-            vec3(1.0, 0.8, 0.1),
-            vec3(0.8, 0.2, 0.8)
-        );
-        float brightness = 1.0 - uv.y; // top bright, bottom dark
-        color = barColors[barIdx % 5] * brightness;
-    }
+    // Composite: HUD over 3D scene
+    vec3 final_col = mix(scene3d, hud.rgb, hud.a);
 
-    // === SECTION 2 (center-left): 3D spheres with smooth lighting ===
-    if (uv.x > 0.25 && uv.x < 0.5) {
-        vec2 sp = (uv - vec2(0.375, 0.5)) * 4.0;
-
-        // Main sphere
-        float s1 = sphere3D(sp, vec2(0.0, -0.3), 0.8);
-        if (s1 > 0.0) color = vec3(0.9, 0.15, 0.1) * s1;
-
-        // Small orbiting sphere
-        vec2 orbitPos = vec2(cos(time * 1.5) * 0.6, sin(time * 1.5) * 0.6 - 0.3);
-        float s2 = sphere3D(sp, orbitPos, 0.3);
-        if (s2 > 0.0) color = vec3(0.1, 0.7, 0.9) * s2;
-
-        // Tiny highlight sphere
-        float s3 = sphere3D(sp, vec2(0.3, 0.5), 0.15);
-        if (s3 > 0.0) color = vec3(1.0, 0.9, 0.3) * s3;
-    }
-
-    // === SECTION 3 (center-right): Sharp geometric shapes — edges trigger fractional/quarter blocks ===
-    if (uv.x > 0.5 && uv.x < 0.75) {
-        vec2 gp = (uv - vec2(0.625, 0.5)) * 4.0;
-
-        // Rotating rectangle
-        float a = time * 0.7;
-        mat2 rot = mat2(cos(a), -sin(a), sin(a), cos(a));
-        float box = sdBox(rot * gp, vec2(0.5, 0.3));
-        if (box < 0.0) color = vec3(0.0, 0.8, 0.4) * (0.5 + 0.5 * cos(box * 10.0));
-
-        // Diamond (rotated square)
-        float a2 = 0.785; // 45 degrees
-        mat2 rot2 = mat2(cos(a2), -sin(a2), sin(a2), cos(a2));
-        float diamond = sdBox(rot2 * (gp + vec2(0.0, 0.8)), vec2(0.25, 0.25));
-        if (diamond < 0.0) color = vec3(1.0, 0.5, 0.0);
-
-        // Triangle approximation (3 intersecting half-planes)
-        vec2 tp = gp + vec2(0.0, -0.7);
-        float tri = max(max(-tp.y - 0.3, tp.x * 0.866 + tp.y * 0.5 - 0.3), -tp.x * 0.866 + tp.y * 0.5 - 0.3);
-        if (tri < 0.0) color = vec3(0.6, 0.1, 0.9);
-    }
-
-    // === SECTION 4 (right): Organic/procedural — noise, waves, particles ===
-    if (uv.x > 0.75) {
-        vec2 np = (uv - vec2(0.875, 0.5)) * 6.0;
-
-        // Plasma-like pattern
-        float plasma = 0.0;
-        plasma += sin(np.x * 3.0 + time * 2.0) * 0.5 + 0.5;
-        plasma += sin(np.y * 4.0 + time * 1.5) * 0.5 + 0.5;
-        plasma += sin((np.x + np.y) * 2.5 + time) * 0.5 + 0.5;
-        plasma += sin(length(np) * 5.0 - time * 3.0) * 0.5 + 0.5;
-        plasma *= 0.25;
-
-        color = vec3(
-            0.5 + 0.5 * sin(plasma * 6.28 + 0.0),
-            0.5 + 0.5 * sin(plasma * 6.28 + 2.09),
-            0.5 + 0.5 * sin(plasma * 6.28 + 4.19)
-        ) * 0.8;
-
-        // Floating bright dots (simulate particles)
-        for (int i = 0; i < 12; i++) {
-            float seed = float(i) * 3.17;
-            vec2 dotPos = vec2(
-                sin(time * 0.8 + seed) * 1.5,
-                cos(time * 0.6 + seed * 1.3) * 2.0
-            );
-            float d = length(np - dotPos);
-            float glow = 0.02 / (d * d + 0.01);
-            glow *= 0.5 + 0.5 * sin(time * 3.0 + seed);
-            vec3 dotColor = vec3(
-                0.5 + 0.5 * sin(seed),
-                0.5 + 0.5 * sin(seed * 1.7),
-                0.5 + 0.5 * sin(seed * 2.3)
-            );
-            color += dotColor * glow * 0.3;
-        }
-    }
-
-    // === TOP BANNER: "GRAPHON" text-like pattern ===
-    if (uv.y < 0.08) {
-        // Bright banner
-        float pulse = 0.8 + 0.2 * sin(time * 2.0);
-        color = vec3(0.9, 0.85, 0.7) * pulse;
-        // Vertical stripes to simulate text
-        float stripe = step(0.4, fract(uv.x * 40.0 + sin(uv.x * 20.0) * 0.3));
-        color *= 0.3 + 0.7 * stripe;
-    }
-
-    // === BOTTOM: Checkerboard with smooth falloff — shows quarter block edge detection ===
-    if (uv.y > 0.92) {
-        float checker = mod(floor(uv.x * 30.0) + floor(uv.y * 30.0), 2.0);
-        float fade = (uv.y - 0.92) / 0.08;
-        color = mix(color, vec3(checker * 0.6 + 0.2), fade);
-    }
-
-    // === CENTER GLOW: orbiting point light ===
-    vec2 lightPos = vec2(0.5 + cos(time * 0.5) * 0.3, 0.5 + sin(time * 0.5) * 0.2);
-    float lightDist = length(uv - lightPos);
-    color += vec3(1.0, 0.8, 0.5) * 0.03 / (lightDist * lightDist + 0.02);
-
-    // === Section divider lines ===
-    for (int i = 1; i < 4; i++) {
-        float lineX = float(i) * 0.25;
-        if (abs(uv.x - lineX) < 0.002) {
-            color = vec3(0.3, 0.3, 0.4);
-        }
-    }
-
-    finalColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+    finalColor = vec4(clamp(final_col, 0.0, 1.0), 1.0);
 }
