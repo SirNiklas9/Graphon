@@ -91,6 +91,11 @@ scene3d_render :: proc(
 		)
 	}
 
+	// Spinning cube
+	rl.DrawCubeV({0, 2, 0}, {3, 3, 3}, {220, 50, 40, 255})
+	// Rotate it by drawing wireframe on top for visual effect
+	rl.DrawCubeWiresV({0, 2, 0}, {3.02, 3.02, 3.02}, {180, 30, 20, 255})
+
 	// Light indicator sphere
 	light_pos := rl.Vector3{math.cos(time * 0.7) * 8, 6, math.sin(time * 0.7) * 8}
 	rl.DrawSphere(light_pos, 0.3, {255, 200, 100, 255})
