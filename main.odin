@@ -248,12 +248,18 @@ main :: proc() {
 			gpu_grid_render(&gg, &grid, font)
 		case .GPU:
 			if cp.enabled {
-				compute_render_direct(&cp, &grid)
+				// Always render with glyphs — GPU grid shader derives chars from brightness
+				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
 			} else {
 				gpu_grid_upload(&gg, &grid)
 				gpu_grid_render(&gg, &grid, font)
 			}
 		}
+		// GPU mode always uses ALL fidelity — shader handles character selection
+		if render_path == .GPU && !grid.forced_fidelity {
+			grid.fidelity = .ALL
+		}
+
 		// Debug overlays — use compute resolution in GPU mode
 		overlay_cols := render_path == .GPU && cp.enabled ? cp.cols : 0
 		overlay_rows := render_path == .GPU && cp.enabled ? cp.rows : 0
