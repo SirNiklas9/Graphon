@@ -3,21 +3,26 @@ package main
 import rl "vendor:raylib"
 import rlgl "vendor:raylib/rlgl"
 
-// GPU grid renderer — single texture, one draw call
-// Each pixel in the data texture = one cell's fg color
-// The shader maps screen pixels to cells and samples the color
+// GPU grid renderer — renders Grafels with block characters via shader
+// Two data textures + font atlas = full Grafel rendering in one draw call
 GPUGrid :: struct {
 	shader:     rl.Shader,
-	color_tex:  rl.Texture2D,
-	color_data: []u8,
+	fg_tex:     rl.Texture2D, // RGBA: fg.r, fg.g, fg.b, char_index
+	bg_tex:     rl.Texture2D, // RGBA: bg.r, bg.g, bg.b, 255
+	fg_data:    []u8,
+	bg_data:    []u8,
 	cols:       int,
 	rows:       int,
 	enabled:    bool,
 
 	// Uniform locations
+	bg_loc:         i32,
+	atlas_loc:      i32,
 	resolution_loc: i32,
 	grid_size_loc:  i32,
 	cell_size_loc:  i32,
+	atlas_size_loc: i32,
+	fidelity_loc:   i32,
 }
 
 gpu_grid_create :: proc(cols, rows: int) -> GPUGrid {
@@ -27,15 +32,19 @@ gpu_grid_create :: proc(cols, rows: int) -> GPUGrid {
 		enabled = false,
 	}
 
-	gg.shader = rl.LoadShader(nil, "assets/gpu_simple.glsl")
+	gg.shader = rl.LoadShader(nil, "assets/gpu_grid.glsl")
 	if gg.shader.id == 0 {
-		rl.TraceLog(.WARNING, "GPU simple shader failed to load")
+		rl.TraceLog(.WARNING, "GPU grid shader failed to load")
 		return gg
 	}
 
+	gg.bg_loc = rl.GetShaderLocation(gg.shader, "cellBG")
+	gg.atlas_loc = rl.GetShaderLocation(gg.shader, "fontAtlas")
 	gg.resolution_loc = rl.GetShaderLocation(gg.shader, "resolution")
 	gg.grid_size_loc = rl.GetShaderLocation(gg.shader, "gridSize")
 	gg.cell_size_loc = rl.GetShaderLocation(gg.shader, "cellSize")
+	gg.atlas_size_loc = rl.GetShaderLocation(gg.shader, "atlasSize")
+	gg.fidelity_loc = rl.GetShaderLocation(gg.shader, "fidelityLevel")
 
 	gpu_grid_alloc(&gg, cols, rows)
 	gg.enabled = true
@@ -45,22 +54,34 @@ gpu_grid_create :: proc(cols, rows: int) -> GPUGrid {
 gpu_grid_alloc :: proc(gg: ^GPUGrid, cols, rows: int) {
 	gg.cols = cols
 	gg.rows = rows
-	gg.color_data = make([]u8, cols * rows * 4)
+	size := cols * rows * 4
 
-	// Create RGBA texture at grid resolution
-	img := rl.Image{
-		data = raw_data(gg.color_data),
+	gg.fg_data = make([]u8, size)
+	gg.bg_data = make([]u8, size)
+
+	fg_img := rl.Image{
+		data = raw_data(gg.fg_data),
 		width = i32(cols), height = i32(rows),
 		mipmaps = 1, format = .UNCOMPRESSED_R8G8B8A8,
 	}
-	gg.color_tex = rl.LoadTextureFromImage(img)
-	rl.SetTextureFilter(gg.color_tex, .POINT)
+	bg_img := rl.Image{
+		data = raw_data(gg.bg_data),
+		width = i32(cols), height = i32(rows),
+		mipmaps = 1, format = .UNCOMPRESSED_R8G8B8A8,
+	}
+
+	gg.fg_tex = rl.LoadTextureFromImage(fg_img)
+	gg.bg_tex = rl.LoadTextureFromImage(bg_img)
+	rl.SetTextureFilter(gg.fg_tex, .POINT)
+	rl.SetTextureFilter(gg.bg_tex, .POINT)
 }
 
 gpu_grid_destroy :: proc(gg: ^GPUGrid) {
 	if gg.enabled {
-		rl.UnloadTexture(gg.color_tex)
-		delete(gg.color_data)
+		rl.UnloadTexture(gg.fg_tex)
+		rl.UnloadTexture(gg.bg_tex)
+		delete(gg.fg_data)
+		delete(gg.bg_data)
 	}
 	if gg.shader.id != 0 {
 		rl.UnloadShader(gg.shader)
@@ -69,12 +90,23 @@ gpu_grid_destroy :: proc(gg: ^GPUGrid) {
 
 gpu_grid_resize :: proc(gg: ^GPUGrid, cols, rows: int) {
 	if !gg.enabled do return
-	rl.UnloadTexture(gg.color_tex)
-	delete(gg.color_data)
+	rl.UnloadTexture(gg.fg_tex)
+	rl.UnloadTexture(gg.bg_tex)
+	delete(gg.fg_data)
+	delete(gg.bg_data)
 	gpu_grid_alloc(gg, cols, rows)
 }
 
-// Upload Grafel buffer fg colors to the GPU texture
+// Rune to character index (0-31)
+char_to_index :: proc(ch: rune) -> u8 {
+	chars := ALL_CODEPOINTS
+	for i in 0 ..< 32 {
+		if chars[i] == ch do return u8(i)
+	}
+	return 0
+}
+
+// Upload Grafel buffer to GPU — fg+char packed, bg separate
 gpu_grid_upload :: proc(gg: ^GPUGrid, grid: ^Grid) {
 	if !gg.enabled do return
 
@@ -85,21 +117,29 @@ gpu_grid_upload :: proc(gg: ^GPUGrid, grid: ^Grid) {
 		for col in 0 ..< cols {
 			g := grid.cells[row * grid.cols + col]
 			px := (row * gg.cols + col) * 4
-			gg.color_data[px + 0] = g.fg[0]
-			gg.color_data[px + 1] = g.fg[1]
-			gg.color_data[px + 2] = g.fg[2]
-			gg.color_data[px + 3] = 255
+
+			// FG + char index packed in alpha
+			gg.fg_data[px + 0] = g.fg[0]
+			gg.fg_data[px + 1] = g.fg[1]
+			gg.fg_data[px + 2] = g.fg[2]
+			gg.fg_data[px + 3] = char_to_index(g.char)
+
+			// BG
+			gg.bg_data[px + 0] = g.bg[0]
+			gg.bg_data[px + 1] = g.bg[1]
+			gg.bg_data[px + 2] = g.bg[2]
+			gg.bg_data[px + 3] = 255
 		}
 	}
 
-	rl.UpdateTexture(gg.color_tex, raw_data(gg.color_data))
+	rl.UpdateTexture(gg.fg_tex, raw_data(gg.fg_data))
+	rl.UpdateTexture(gg.bg_tex, raw_data(gg.bg_data))
 }
 
-// Render the entire grid in one draw call
+// Render entire grid in one draw call with glyph rendering
 gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font) {
 	if !gg.enabled do return
 
-	// Set uniforms
 	res := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
 	rl.SetShaderValue(gg.shader, gg.resolution_loc, &res, .VEC2)
 
@@ -109,11 +149,46 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font) {
 	cs := [2]f32{grid.cell_w, grid.cell_h}
 	rl.SetShaderValue(gg.shader, gg.cell_size_loc, &cs, .VEC2)
 
-	// Draw the color texture fullscreen with the shader
-	// DrawTexturePro stretches the texture and gives 0-1 UVs via fragTexCoord
+	as := [2]f32{f32(font.texture.width), f32(font.texture.height)}
+	rl.SetShaderValue(gg.shader, gg.atlas_size_loc, &as, .VEC2)
+
+	fid := i32(grid.fidelity)
+	rl.SetShaderValue(gg.shader, gg.fidelity_loc, &fid, .INT)
+
+	// Upload glyph rectangles
+	chars := ALL_CODEPOINTS
+	for i in 0 ..< 32 {
+		gi := rl.GetGlyphIndex(font, chars[i])
+		rec := font.recs[gi]
+		glyph_rect := [4]f32{rec.x, rec.y, rec.width, rec.height}
+		loc := rl.GetShaderLocation(gg.shader, rl.TextFormat("glyphRects[%d]", i32(i)))
+		rl.SetShaderValue(gg.shader, loc, &glyph_rect, .VEC4)
+	}
+
+	// Bind bg to unit 1, font atlas to unit 2
+	bg_unit: i32 = 1
+	atlas_unit: i32 = 2
+	rl.SetShaderValue(gg.shader, gg.bg_loc, &bg_unit, .INT)
+	rl.SetShaderValue(gg.shader, gg.atlas_loc, &atlas_unit, .INT)
+
+	rlgl.DrawRenderBatchActive()
+
+	rlgl.ActiveTextureSlot(bg_unit)
+	rlgl.EnableTexture(gg.bg_tex.id)
+	rlgl.ActiveTextureSlot(atlas_unit)
+	rlgl.EnableTexture(font.texture.id)
+	rlgl.ActiveTextureSlot(0)
+
 	rl.BeginShaderMode(gg.shader)
-	src := rl.Rectangle{0, 0, f32(gg.color_tex.width), f32(gg.color_tex.height)}
+	src := rl.Rectangle{0, 0, f32(gg.fg_tex.width), f32(gg.fg_tex.height)}
 	dst := rl.Rectangle{0, 0, res[0], res[1]}
-	rl.DrawTexturePro(gg.color_tex, src, dst, {0, 0}, 0, rl.WHITE)
+	rl.DrawTexturePro(gg.fg_tex, src, dst, {0, 0}, 0, rl.WHITE)
 	rl.EndShaderMode()
+
+	rlgl.DrawRenderBatchActive()
+	rlgl.ActiveTextureSlot(bg_unit)
+	rlgl.DisableTexture()
+	rlgl.ActiveTextureSlot(atlas_unit)
+	rlgl.DisableTexture()
+	rlgl.ActiveTextureSlot(0)
 }
