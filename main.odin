@@ -253,8 +253,11 @@ main :: proc() {
 				gpu_grid_render(&gg, &grid, font)
 			}
 		}
-		if cfg.show_grid_lines { debug_grid_lines(&grid) }
-		if cfg.show_cell_coords { debug_cell_coords(&grid, font) }
+		// Debug overlays — use compute resolution in GPU mode
+		overlay_cols := render_path == .GPU && cp.enabled ? cp.cols : 0
+		overlay_rows := render_path == .GPU && cp.enabled ? cp.rows : 0
+		if cfg.show_grid_lines { debug_grid_lines(&grid, overlay_cols, overlay_rows) }
+		if cfg.show_cell_coords { debug_cell_coords(&grid, font, overlay_cols, overlay_rows) }
 
 		if use_postfx {
 			gpu_end(&gpu)

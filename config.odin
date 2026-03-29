@@ -52,27 +52,35 @@ config_apply :: proc(cfg: ^Config) {
 }
 
 // Debug overlay: draw grid lines between cells
-debug_grid_lines :: proc(grid: ^Grid) {
+debug_grid_lines :: proc(grid: ^Grid, override_cols: int = 0, override_rows: int = 0) {
+	cols := override_cols > 0 ? override_cols : grid.cols
+	rows := override_rows > 0 ? override_rows : grid.rows
+	cw := f32(rl.GetScreenWidth()) / f32(cols)
+	ch := f32(rl.GetScreenHeight()) / f32(rows)
+
 	color := rl.Color{60, 60, 60, 100}
-	// Vertical lines
-	for col in 0 ..= grid.cols {
-		x := i32(f32(col) * grid.cell_w)
-		rl.DrawLine(x, 0, x, i32(f32(grid.rows) * grid.cell_h), color)
+	for col in 0 ..= cols {
+		x := i32(f32(col) * cw)
+		rl.DrawLine(x, 0, x, i32(f32(rows) * ch), color)
 	}
-	// Horizontal lines
-	for row in 0 ..= grid.rows {
-		y := i32(f32(row) * grid.cell_h)
-		rl.DrawLine(0, y, i32(f32(grid.cols) * grid.cell_w), y, color)
+	for row in 0 ..= rows {
+		y := i32(f32(row) * ch)
+		rl.DrawLine(0, y, i32(f32(cols) * cw), y, color)
 	}
 }
 
 // Debug overlay: show cell coordinates at each cell
-debug_cell_coords :: proc(grid: ^Grid, font: rl.Font) {
-	if grid.cell_w < 30 do return // too small to show coords
-	for row in 0 ..< min(grid.rows, 20) {
-		for col in 0 ..< min(grid.cols, 20) {
-			x := f32(col) * grid.cell_w + 1
-			y := f32(row) * grid.cell_h + 1
+debug_cell_coords :: proc(grid: ^Grid, font: rl.Font, override_cols: int = 0, override_rows: int = 0) {
+	cols := override_cols > 0 ? override_cols : grid.cols
+	rows := override_rows > 0 ? override_rows : grid.rows
+	cw := f32(rl.GetScreenWidth()) / f32(cols)
+	ch := f32(rl.GetScreenHeight()) / f32(rows)
+
+	if cw < 30 do return
+	for row in 0 ..< min(rows, 20) {
+		for col in 0 ..< min(cols, 20) {
+			x := f32(col) * cw + 1
+			y := f32(row) * ch + 1
 			rl.DrawTextEx(font, rl.TextFormat("%d,%d", i32(col), i32(row)),
 				{x, y}, f32(grid.font_size) * 0.4, 0, {255, 255, 0, 150})
 		}
