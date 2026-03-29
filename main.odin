@@ -134,8 +134,8 @@ main :: proc() {
 
 		// Cycle demo mode: 0=random, 1=solver, 2=primitives, 3=3D, 4=layers, 5=compute
 		if rl.IsKeyPressed(.TAB) {
-			demo_mode = (demo_mode + 1) % 6
-			if demo_mode != 3 && demo_mode != 4 && demo_mode != 5 {
+			demo_mode = (demo_mode + 1) % 7
+			if demo_mode != 3 && demo_mode != 4 && demo_mode != 5 && demo_mode != 6 {
 				refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
 			}
 		}
@@ -312,7 +312,7 @@ main :: proc() {
 			fmt.bprintf(am_buf[:], "App: %s (F9)\x00", app_mode)
 			imgui.Text(cstring(raw_data(am_buf[:])))
 
-			mode_names := [6]cstring{"Random", "Solver", "Primitives", "3D", "Layers", "Compute"}
+			mode_names := [7]cstring{"Random", "Solver", "Primitives", "3D", "Layers", "Compute", "Showcase"}
 			mode_buf: [32]u8
 			fmt.bprintf(mode_buf[:], "Mode: %s\x00", mode_names[demo_mode])
 			imgui.Text(cstring(raw_data(mode_buf[:])))
@@ -402,6 +402,7 @@ refresh_demo :: proc(grid: ^Grid, mode: int, palette: ^Palette, blend: BlendMode
 	case 3: // 3D mode refreshes per-frame in main loop
 	case 4: // Layers mode refreshes per-frame in main loop
 	case 5: // Compute mode runs on GPU
+	case 6: // Showcase mode runs on GPU
 	}
 }
 
