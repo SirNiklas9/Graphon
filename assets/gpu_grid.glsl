@@ -261,6 +261,13 @@ void main() {
     vec2 glyphUV = (rect.xy + localPos * rect.zw) / atlasSize;
     float coverage = texture(fontAtlas, glyphUV).a;
 
-    // Mix bg and fg based on glyph shape
-    finalColor = vec4(mix(bg, fg, coverage), 1.0);
+    // Final color
+    if (computeMode == 1) {
+        // Compute mode: modulate brightness by coverage — keeps color, adds character texture
+        float intensity = 0.4 + 0.6 * coverage;
+        finalColor = vec4(fg * intensity, 1.0);
+    } else {
+        // Hybrid mode: mix bg and fg based on glyph shape
+        finalColor = vec4(mix(bg, fg, coverage), 1.0);
+    }
 }
