@@ -214,7 +214,10 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bo
 	draw_tex := override_tex.id != 0 ? override_tex : gg.fg_tex
 
 	rl.BeginShaderMode(gg.shader)
-	src := rl.Rectangle{0, 0, f32(draw_tex.width), f32(draw_tex.height)}
+	// RenderTextures are Y-flipped in OpenGL — negate height for compute textures
+	src_h := f32(draw_tex.height)
+	if is_compute { src_h = -src_h }
+	src := rl.Rectangle{0, 0, f32(draw_tex.width), src_h}
 	dst := rl.Rectangle{0, 0, f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
 	rl.DrawTexturePro(draw_tex, src, dst, {0, 0}, 0, rl.WHITE)
 	rl.EndShaderMode()
