@@ -219,6 +219,9 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bo
 	// Choose source texture — either our packed fg texture or an external compute texture
 	draw_tex := override_tex.id != 0 ? override_tex : gg.fg_tex
 
+	// Disable alpha blending — compute textures store char index in alpha, not transparency
+	if is_compute { rlgl.DisableColorBlend() }
+
 	rl.BeginShaderMode(gg.shader)
 	// RenderTextures are Y-flipped in OpenGL — negate height for compute textures
 	src_h := f32(draw_tex.height)
@@ -227,6 +230,8 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bo
 	dst := rl.Rectangle{0, 0, f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
 	rl.DrawTexturePro(draw_tex, src, dst, {0, 0}, 0, rl.WHITE)
 	rl.EndShaderMode()
+
+	if is_compute { rlgl.EnableColorBlend() }
 
 	rlgl.DrawRenderBatchActive()
 	rlgl.ActiveTextureSlot(bg_unit)
