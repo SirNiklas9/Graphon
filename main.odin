@@ -159,21 +159,15 @@ main :: proc() {
 				camera_update(&cam, dt)
 			}
 			is_compute_mode := demo_mode >= 5
-			if (render_path == .GPU || is_compute_mode) && cp.enabled {
-				if demo_mode == 3 {
-					// 3D mode on GPU: use Raylib's native 3D renderer
-					scene_objects := [1]Scene3DObject{
-						{model = &suzanne, position = {-5, 2, 0}, scale = 2.0, auto_rotate = true, rotate_speed = 0.5, tint = {255, 165, 50, 255}},
-					}
-					scene3d_render(&scene3d, &cam, scene_objects[:], time)
-				} else {
-					compute_run(&cp, demo_mode, time, &grid, int(demo_blend), &cam)
-				}
+			// Compute shaders for GPU-only modes
+			if (render_path == .GPU || is_compute_mode) && cp.enabled && demo_mode != 3 {
+				compute_run(&cp, demo_mode, time, &grid, int(demo_blend), &cam)
 			}
-			if render_path != .GPU && !is_compute_mode {
-				if demo_mode == 3 {
-					fill_3d_demo(&grid, &db, &cam, &palette, &scene_lights, time, &suzanne)
-				}
+			// CPU rasterizer for 3D mode (all render paths — identical look)
+			if demo_mode == 3 {
+				fill_3d_demo(&grid, &db, &cam, &palette, &scene_lights, time, &suzanne)
+			}
+			if render_path != .GPU && !is_compute_mode && demo_mode != 3 {
 				if demo_mode == 4 {
 					fill_layers_demo(&grid, &ls, &palette, time)
 				}
@@ -259,41 +253,28 @@ main :: proc() {
 			rl.ClearBackground(rl.BLACK)
 		}
 
-		// Determine which GPU texture to use
 		is_gpu_only_mode := demo_mode >= 5
-		is_3d_gpu := demo_mode == 3 && render_path == .GPU
-
-		// Pick the right texture source
-		gpu_tex: rl.Texture2D
-		gpu_cols, gpu_rows: int
-		if is_3d_gpu && scene3d.enabled {
-			gpu_tex = scene3d.target.texture
-			gpu_cols = scene3d.cols
-			gpu_rows = scene3d.rows
-		} else if cp.enabled {
-			gpu_tex = cp.target.texture
-			gpu_cols = cp.cols
-			gpu_rows = cp.rows
-		}
+		has_compute_tex := is_gpu_only_mode && cp.enabled && cp.target.texture.id != 0
 
 		switch render_path {
 		case .CPU:
-			if is_gpu_only_mode && gpu_tex.id != 0 {
-				gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
+			if has_compute_tex {
+				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
 			} else {
 				render_grid(&grid, font)
 			}
 		case .Hybrid:
-			if is_gpu_only_mode && gpu_tex.id != 0 {
-				gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
+			if has_compute_tex {
+				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
 			} else {
 				gpu_grid_upload(&gg, &grid)
 				gpu_grid_render(&gg, &grid, font)
 			}
 		case .GPU:
-			if gpu_tex.id != 0 {
-				gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
+			if has_compute_tex {
+				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
 			} else {
+				// 3D and other CPU-filled modes: upload grid and display with GPU glyphs
 				gpu_grid_upload(&gg, &grid)
 				gpu_grid_render(&gg, &grid, font)
 			}
