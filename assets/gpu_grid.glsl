@@ -263,8 +263,8 @@ void main() {
 
     // Final color
     if (computeMode == 1) {
-        // Compute mode: modulate brightness by coverage — keeps color, adds character texture
-        float intensity = 0.4 + 0.6 * coverage;
+        // Compute mode: modulate brightness by coverage — keeps color, adds subtle character texture
+        float intensity = 0.75 + 0.25 * coverage;
         finalColor = vec4(fg * intensity, 1.0);
     } else {
         // Hybrid mode: mix bg and fg based on glyph shape
