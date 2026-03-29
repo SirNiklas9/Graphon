@@ -18,46 +18,188 @@ uniform vec2 atlasSize;
 uniform int fidelityLevel; // 0=FULL_ONLY, 1=DENSITY, 2=HALF, 3=FRACTIONAL, 4=ALL
 uniform int computeMode;   // 0=hybrid (read char from texture), 1=compute (derive char from brightness)
 
-// Derive character index from brightness — maps coverage to block characters
-// Density: 0=█(1.0), 1=▓(0.75), 2=▒(0.5), 3=░(0.25)
-// Half: 4=▀, 5=▄, 6=▌, 7=▐
-// Quarter: 22-31
-int charFromBrightness(float brightness, vec2 localPos) {
-    if (fidelityLevel == 0) return 0; // FULL_ONLY
+// Character index map:
+// 0-3:   Density  — █ ▓ ▒ ░
+// 4-7:   Half     — ▀ ▄ ▌ ▐
+// 8-13:  Bottom bars — ▁ ▂ ▃ ▅ ▆ ▇ (1/8 to 7/8 height from bottom)
+// 14-19: Left bars  — ▉ ▊ ▋ ▍ ▎ ▏ (7/8 to 1/8 width from left)
+// 20-21: Thin edges — ▔ ▕ (top bar, right bar)
+// 22-31: Quarters   — ▖ ▗ ▘ ▝ ▙ ▚ ▛ ▜ ▞ ▟
 
-    // At ALL fidelity, use position-aware characters
-    if (fidelityLevel >= 4) {
-        // Quarter blocks based on position within cell
-        bool top = localPos.y < 0.5;
-        bool left = localPos.x < 0.5;
+// Sample neighboring cell brightness for edge detection
+float sampleBrightness(vec2 cellCoord, vec2 offset) {
+    vec2 nc = cellCoord + offset;
+    if (nc.x < 0.0 || nc.x >= gridSize.x || nc.y < 0.0 || nc.y >= gridSize.y)
+        return 0.0;
+    vec2 uv = (nc + 0.5) / gridSize;
+    vec4 s = texture(texture0, uv);
+    return dot(s.rgb, vec3(0.299, 0.587, 0.114));
+}
 
-        if (brightness > 0.9) return 0;  // full block
-        if (brightness > 0.7) return 1;  // ▓
-        if (brightness > 0.5) {
-            // Use half blocks based on dominant position
-            if (top) return 4;   // ▀
-            else return 5;       // ▄
-        }
-        if (brightness > 0.3) return 2;  // ▒
-        if (brightness > 0.1) return 3;  // ░
+int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
+    if (fidelityLevel == 0) return 0; // FULL_ONLY — solid rectangles
+
+    // DENSITY only (level 1): 4 density characters
+    if (fidelityLevel == 1) {
+        if (brightness > 0.875) return 0;  // █
+        if (brightness > 0.625) return 1;  // ▓
+        if (brightness > 0.375) return 2;  // ▒
+        if (brightness > 0.125) return 3;  // ░
         return 0;
     }
 
-    // FRACTIONAL/HALF: density + half blocks
-    if (fidelityLevel >= 2) {
-        if (brightness > 0.875) return 0;
+    // HALF (level 2): density + half blocks using edge detection
+    if (fidelityLevel == 2) {
+        float above = sampleBrightness(cellCoord, vec2(0.0, -1.0));
+        float below = sampleBrightness(cellCoord, vec2(0.0, 1.0));
+        float left  = sampleBrightness(cellCoord, vec2(-1.0, 0.0));
+        float right = sampleBrightness(cellCoord, vec2(1.0, 0.0));
+
+        float vEdge = abs(above - below);
+        float hEdge = abs(left - right);
+
+        if (brightness > 0.9) return 0;
+        if (vEdge > 0.2 && brightness > 0.4) {
+            return (above > below) ? 4 : 5; // ▀ or ▄
+        }
+        if (hEdge > 0.2 && brightness > 0.4) {
+            return (left > right) ? 6 : 7;  // ▌ or ▐
+        }
         if (brightness > 0.625) return 1;
         if (brightness > 0.375) return 2;
         if (brightness > 0.125) return 3;
         return 0;
     }
 
-    // DENSITY only
-    if (brightness > 0.875) return 0;
-    if (brightness > 0.625) return 1;
-    if (brightness > 0.375) return 2;
-    if (brightness > 0.125) return 3;
-    return 0;
+    // FRACTIONAL (level 3): density + half + fractional bars
+    if (fidelityLevel == 3) {
+        float above = sampleBrightness(cellCoord, vec2(0.0, -1.0));
+        float below = sampleBrightness(cellCoord, vec2(0.0, 1.0));
+        float left  = sampleBrightness(cellCoord, vec2(-1.0, 0.0));
+        float right = sampleBrightness(cellCoord, vec2(1.0, 0.0));
+
+        if (brightness > 0.95) return 0; // █
+
+        // Vertical edge — use bottom bars (▁▂▃▅▆▇) based on fill amount
+        if (abs(above - below) > 0.15) {
+            float fill = (above > below) ? brightness : (1.0 - brightness);
+            fill = clamp(fill, 0.0, 1.0);
+            if (fill > 0.85) return 0;     // █
+            if (fill > 0.72) return 13;    // ▇
+            if (fill > 0.60) return 12;    // ▆
+            if (fill > 0.47) return 11;    // ▅
+            if (fill > 0.35) return 10;    // ▃
+            if (fill > 0.22) return 9;     // ▂
+            if (fill > 0.1)  return 8;     // ▁
+            return 0;
+        }
+
+        // Horizontal edge — use left bars (▉▊▋▍▎▏)
+        if (abs(left - right) > 0.15) {
+            float fill = (left > right) ? brightness : (1.0 - brightness);
+            fill = clamp(fill, 0.0, 1.0);
+            if (fill > 0.85) return 0;     // █
+            if (fill > 0.72) return 14;    // ▉
+            if (fill > 0.60) return 15;    // ▊
+            if (fill > 0.47) return 16;    // ▋
+            if (fill > 0.35) return 17;    // ▍
+            if (fill > 0.22) return 18;    // ▎
+            if (fill > 0.1)  return 19;    // ▏
+            return 0;
+        }
+
+        // No strong edge — use density
+        if (brightness > 0.75) return 1;
+        if (brightness > 0.5)  return 2;
+        if (brightness > 0.25) return 3;
+        return 0;
+    }
+
+    // ALL (level 4): full 32-character set with quarter blocks
+    {
+        float above = sampleBrightness(cellCoord, vec2(0.0, -1.0));
+        float below = sampleBrightness(cellCoord, vec2(0.0, 1.0));
+        float left  = sampleBrightness(cellCoord, vec2(-1.0, 0.0));
+        float right = sampleBrightness(cellCoord, vec2(1.0, 0.0));
+        float tl = sampleBrightness(cellCoord, vec2(-1.0, -1.0));
+        float tr = sampleBrightness(cellCoord, vec2(1.0, -1.0));
+        float bl = sampleBrightness(cellCoord, vec2(-1.0, 1.0));
+        float br = sampleBrightness(cellCoord, vec2(1.0, 1.0));
+
+        if (brightness > 0.95) return 0; // █
+
+        // Quarter block detection — compare quadrant brightnesses
+        float quadTL = (tl + above + left + brightness) * 0.25;
+        float quadTR = (tr + above + right + brightness) * 0.25;
+        float quadBL = (bl + below + left + brightness) * 0.25;
+        float quadBR = (br + below + right + brightness) * 0.25;
+
+        float avg = (quadTL + quadTR + quadBL + quadBR) * 0.25;
+        bool qTL = quadTL > avg;
+        bool qTR = quadTR > avg;
+        bool qBL = quadBL > avg;
+        bool qBR = quadBR > avg;
+
+        int qCount = (qTL ? 1 : 0) + (qTR ? 1 : 0) + (qBL ? 1 : 0) + (qBR ? 1 : 0);
+
+        // Strong quadrant pattern — use quarter blocks
+        if (qCount >= 1 && qCount <= 3 && brightness > 0.15 && brightness < 0.85) {
+            // ▖▗▘▝ — single quadrant
+            if (qCount == 1) {
+                if (qBL) return 22; // ▖
+                if (qBR) return 23; // ▗
+                if (qTL) return 24; // ▘
+                if (qTR) return 25; // ▝
+            }
+            // ▙▚▛▜▞▟ — two/three quadrants
+            if (qCount == 2) {
+                if (qBL && qTL) return 6;  // ▌
+                if (qBR && qTR) return 7;  // ▐
+                if (qTL && qTR) return 4;  // ▀
+                if (qBL && qBR) return 5;  // ▄
+                if (qTL && qBR) return 27; // ▚ diagonal
+                if (qTR && qBL) return 30; // ▞ diagonal
+            }
+            if (qCount == 3) {
+                if (!qTR) return 28; // ▛
+                if (!qTL) return 29; // ▜
+                if (!qBR) return 26; // ▙
+                if (!qBL) return 31; // ▟
+            }
+        }
+
+        // Fallback to fractional bars for edges
+        float vEdge = abs(above - below);
+        float hEdge = abs(left - right);
+
+        if (vEdge > 0.1) {
+            float fill = brightness;
+            if (fill > 0.85) return 0;
+            if (fill > 0.72) return 13;
+            if (fill > 0.60) return 12;
+            if (fill > 0.47) return 11;
+            if (fill > 0.35) return 10;
+            if (fill > 0.22) return 9;
+            if (fill > 0.1)  return 8;
+        }
+
+        if (hEdge > 0.1) {
+            float fill = brightness;
+            if (fill > 0.85) return 0;
+            if (fill > 0.72) return 14;
+            if (fill > 0.60) return 15;
+            if (fill > 0.47) return 16;
+            if (fill > 0.35) return 17;
+            if (fill > 0.22) return 18;
+            if (fill > 0.1)  return 19;
+        }
+
+        // No edges — density
+        if (brightness > 0.75) return 1;
+        if (brightness > 0.5)  return 2;
+        if (brightness > 0.25) return 3;
+        return 0;
+    }
 }
 
 void main() {
@@ -88,7 +230,7 @@ void main() {
     if (computeMode == 1) {
         // Compute mode: derive character from fg brightness
         float brightness = dot(fg, vec3(0.299, 0.587, 0.114));
-        idx = charFromBrightness(brightness, localPos);
+        idx = charFromBrightness(brightness, localPos, cellCoord);
         // In compute mode, bg is dark
         bg = vec3(0.08, 0.08, 0.1);
     } else {
