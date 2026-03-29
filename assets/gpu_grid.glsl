@@ -231,8 +231,8 @@ void main() {
         // Compute mode: derive character from fg brightness
         float brightness = dot(fg, vec3(0.299, 0.587, 0.114));
         idx = charFromBrightness(brightness, localPos, cellCoord);
-        // In compute mode, bg is dark
-        bg = vec3(0.08, 0.08, 0.1);
+        // bg is a darker shade of fg — preserves color while showing character detail
+        bg = fg * 0.3;
     } else {
         // Hybrid mode: read char index from texture alpha
         idx = clamp(int(fgData.a * 255.0 + 0.5), 0, 31);
