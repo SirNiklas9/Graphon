@@ -6,16 +6,16 @@ import rlgl "vendor:raylib/rlgl"
 // GPU compute pipeline — one shader per demo mode
 // Each shader generates cell colors entirely on GPU
 ComputePipeline :: struct {
-	shaders:  [7]rl.Shader, // one per demo mode (0-6)
+	shaders:  [6]rl.Shader, // one per demo mode (0-5)
 	target:   rl.RenderTexture2D,
 	cols:     int,
 	rows:     int,
 	enabled:  bool,
 
 	// Common uniform locations per shader
-	time_locs:     [7]i32,
-	gridsize_locs: [7]i32,
-	extra_locs:    [7]i32, // mode-specific (blendMode for solver, etc.)
+	time_locs:     [6]i32,
+	gridsize_locs: [6]i32,
+	extra_locs:    [6]i32, // mode-specific (blendMode for solver, etc.)
 
 	// Cached locations for 3D mode
 	cam_pos_loc:    i32,
@@ -26,14 +26,13 @@ ComputePipeline :: struct {
 	scene_cs_loc:   i32,
 }
 
-COMPUTE_SHADER_PATHS :: [7]cstring{
+COMPUTE_SHADER_PATHS :: [6]cstring{
 	"assets/compute_random.glsl",     // 0: Random
 	"assets/compute_solver.glsl",     // 1: Solver
 	"assets/compute_primitives.glsl", // 2: Primitives
 	"assets/compute_3d.glsl",         // 3: 3D
 	"assets/compute_layers.glsl",     // 4: Layers
-	"assets/compute_particles.glsl",  // 5: Particles
-	"assets/compute_scene.glsl",      // 6: Compute (original)
+	"assets/compute_scene.glsl",      // 5: Compute
 }
 
 compute_create :: proc(cols, rows: int) -> ComputePipeline {
@@ -45,7 +44,7 @@ compute_create :: proc(cols, rows: int) -> ComputePipeline {
 
 	all_loaded := true
 	paths := COMPUTE_SHADER_PATHS
-	for i in 0 ..< 7 {
+	for i in 0 ..< 6 {
 		cp.shaders[i] = rl.LoadShader(nil, paths[i])
 		if cp.shaders[i].id == 0 {
 			rl.TraceLog(.WARNING, "Compute shader %d failed to load", i32(i))
@@ -79,7 +78,7 @@ compute_destroy :: proc(cp: ^ComputePipeline) {
 	if cp.target.id != 0 {
 		rl.UnloadRenderTexture(cp.target)
 	}
-	for i in 0 ..< 7 {
+	for i in 0 ..< 6 {
 		if cp.shaders[i].id != 0 { rl.UnloadShader(cp.shaders[i]) }
 	}
 }
@@ -97,7 +96,7 @@ compute_resize :: proc(cp: ^ComputePipeline, cols, rows: int) {
 // Run compute shader for a specific demo mode
 compute_run :: proc(cp: ^ComputePipeline, demo_mode: int, time_val: f32, grid: ^Grid, blend_mode: int = 0, cam: ^Camera = nil) {
 	if !cp.enabled do return
-	if demo_mode < 0 || demo_mode >= 7 do return
+	if demo_mode < 0 || demo_mode >= 6 do return
 
 	shader := cp.shaders[demo_mode]
 	if shader.id == 0 do return
