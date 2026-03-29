@@ -10,6 +10,11 @@ Scene3D :: struct {
 	cols:    int,
 	rows:    int,
 	enabled: bool,
+	shader:  rl.Shader,
+	light_dir_loc: i32,
+	light_color_loc: i32,
+	ambient_loc: i32,
+	view_pos_loc: i32,
 }
 
 scene3d_create :: proc(cols, rows: int) -> Scene3D {
@@ -28,12 +33,32 @@ scene3d_create :: proc(cols, rows: int) -> Scene3D {
 	r = max(r, 1)
 
 	target := rl.LoadRenderTexture(i32(c), i32(r))
-	return Scene3D{target = target, cols = c, rows = r, enabled = true}
+
+	// Load lighting shader
+	shader := rl.LoadShader("assets/lighting.vs", "assets/lighting.fs")
+	light_dir_loc := rl.GetShaderLocation(shader, "lightDir")
+	light_color_loc := rl.GetShaderLocation(shader, "lightColor")
+	ambient_loc := rl.GetShaderLocation(shader, "ambientColor")
+	view_pos_loc := rl.GetShaderLocation(shader, "viewPos")
+
+	// Set matModel and matNormal shader locations so Raylib passes them
+	shader.locs[rl.ShaderLocationIndex.MATRIX_MODEL] = rl.GetShaderLocation(shader, "matModel")
+	shader.locs[rl.ShaderLocationIndex.MATRIX_NORMAL] = rl.GetShaderLocation(shader, "matNormal")
+
+	return Scene3D{
+		target = target, cols = c, rows = r, enabled = true,
+		shader = shader,
+		light_dir_loc = light_dir_loc,
+		light_color_loc = light_color_loc,
+		ambient_loc = ambient_loc,
+		view_pos_loc = view_pos_loc,
+	}
 }
 
 scene3d_destroy :: proc(s: ^Scene3D) {
 	if s.enabled {
 		rl.UnloadRenderTexture(s.target)
+		if s.shader.id != 0 { rl.UnloadShader(s.shader) }
 	}
 }
 
@@ -56,6 +81,16 @@ scene3d_render :: proc(
 	rl.BeginTextureMode(s.target)
 	rl.ClearBackground({20, 20, 25, 255})
 
+	// Update lighting uniforms
+	light_dir := [3]f32{-0.4, -0.8, -0.3}
+	light_color := [3]f32{1.0, 0.95, 0.85}
+	ambient := [3]f32{0.15, 0.15, 0.2}
+	view_pos := [3]f32{cam.rl_cam.position.x, cam.rl_cam.position.y, cam.rl_cam.position.z}
+	rl.SetShaderValue(s.shader, s.light_dir_loc, &light_dir, .VEC3)
+	rl.SetShaderValue(s.shader, s.light_color_loc, &light_color, .VEC3)
+	rl.SetShaderValue(s.shader, s.ambient_loc, &ambient, .VEC3)
+	rl.SetShaderValue(s.shader, s.view_pos_loc, &view_pos, .VEC3)
+
 	rl.BeginMode3D(cam.rl_cam)
 
 	// Ground plane
@@ -74,9 +109,14 @@ scene3d_render :: proc(
 		}
 	}
 
-	// Render all scene objects
+	// Render all scene objects with lighting shader
 	for &obj in models {
 		if !obj.loaded do continue
+
+		// Apply lighting shader to all model materials
+		for mi in 0 ..< obj.model.materialCount {
+			obj.model.materials[mi].shader = s.shader
+		}
 
 		pos := obj.position
 		rot_y := obj.rotation_y
@@ -87,14 +127,15 @@ scene3d_render :: proc(
 		rl.DrawModelEx(
 			obj.model,
 			pos,
-			{0, 1, 0},          // rotation axis
-			rot_y * 57.2958,     // radians to degrees
+			{0, 1, 0},
+			rot_y * 57.2958,
 			{obj.scale, obj.scale, obj.scale},
 			obj.tint,
 		)
 	}
 
-	// Spinning cube
+	// Spinning cube — use shader mode for basic primitives too
+	rl.BeginShaderMode(s.shader)
 	rl.DrawCubeV({0, 2, 0}, {3, 3, 3}, {220, 50, 40, 255})
 	// Rotate it by drawing wireframe on top for visual effect
 	rl.DrawCubeWiresV({0, 2, 0}, {3.02, 3.02, 3.02}, {180, 30, 20, 255})
@@ -110,6 +151,7 @@ scene3d_render :: proc(
 		rl.DrawCylinder(pillar_pos[i], 0.6, 0.6, 6, 12, pillar_colors[i])
 	}
 
+	rl.EndShaderMode()
 	rl.EndMode3D()
 	rl.EndTextureMode()
 }
