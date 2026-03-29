@@ -149,9 +149,11 @@ main :: proc() {
 			if demo_mode == 3 {
 				camera_update(&cam, dt)
 			}
-			if render_path == .GPU && cp.enabled {
+			is_compute_mode := demo_mode >= 5
+			if (render_path == .GPU || is_compute_mode) && cp.enabled {
 				compute_run(&cp, demo_mode, time, &grid, int(demo_blend), &cam)
-			} else {
+			}
+			if render_path != .GPU && !is_compute_mode {
 				if demo_mode == 3 {
 					fill_3d_demo(&grid, &db, &cam, &palette, &scene_lights, time)
 				}
@@ -240,15 +242,25 @@ main :: proc() {
 			rl.ClearBackground(rl.BLACK)
 		}
 
+		// GPU-only modes (5=Compute, 6=Showcase) always use compute path
+		is_gpu_only_mode := demo_mode >= 5
+
 		switch render_path {
 		case .CPU:
-			render_grid(&grid, font)
+			if is_gpu_only_mode && cp.enabled {
+				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
+			} else {
+				render_grid(&grid, font)
+			}
 		case .Hybrid:
-			gpu_grid_upload(&gg, &grid)
-			gpu_grid_render(&gg, &grid, font)
+			if is_gpu_only_mode && cp.enabled {
+				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
+			} else {
+				gpu_grid_upload(&gg, &grid)
+				gpu_grid_render(&gg, &grid, font)
+			}
 		case .GPU:
 			if cp.enabled {
-				// Always render with glyphs — GPU grid shader derives chars from brightness
 				gpu_grid_render(&gg, &grid, font, true, cp.target.texture, cp.cols, cp.rows)
 			} else {
 				gpu_grid_upload(&gg, &grid)
