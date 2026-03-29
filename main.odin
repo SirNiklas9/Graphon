@@ -304,8 +304,15 @@ main :: proc() {
 		}
 
 		// Debug overlays — use compute resolution in GPU mode
-		overlay_cols := render_path == .GPU && cp.enabled ? cp.cols : 0
-		overlay_rows := render_path == .GPU && cp.enabled ? cp.rows : 0
+		overlay_cols: int
+		overlay_rows: int
+		if demo_mode == 3 && scene3d.enabled {
+			overlay_cols = scene3d.cols
+			overlay_rows = scene3d.rows
+		} else if has_gpu_tex {
+			overlay_cols = gpu_cols
+			overlay_rows = gpu_rows
+		}
 		if cfg.show_grid_lines { debug_grid_lines(&grid, overlay_cols, overlay_rows) }
 		if cfg.show_cell_coords { debug_cell_coords(&grid, font, overlay_cols, overlay_rows) }
 

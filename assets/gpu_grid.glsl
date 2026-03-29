@@ -39,12 +39,12 @@ float sampleBrightness(vec2 cellCoord, vec2 offset) {
 int charFromBrightness(float brightness, vec2 localPos, vec2 cellCoord) {
     if (fidelityLevel == 0) return 0; // FULL_ONLY — solid rectangles
 
-    // DENSITY only (level 1): 4 density characters
+    // DENSITY only (level 1): 4 density characters — spread evenly
     if (fidelityLevel == 1) {
-        if (brightness > 0.875) return 0;  // █
-        if (brightness > 0.625) return 1;  // ▓
-        if (brightness > 0.375) return 2;  // ▒
-        if (brightness > 0.125) return 3;  // ░
+        if (brightness > 0.75) return 0;   // █
+        if (brightness > 0.50) return 1;   // ▓
+        if (brightness > 0.25) return 2;   // ▒
+        if (brightness > 0.05) return 3;   // ░
         return 0;
     }
 
