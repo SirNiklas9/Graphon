@@ -101,6 +101,7 @@ main :: proc() {
 	mouse: Mouse
 	show_cursor := true
 	paint_color := palette_get(&palette, "white")
+	canvas_mode := false // false = Demo, true = Canvas
 
 	randomize_grid(&grid)
 
@@ -143,28 +144,26 @@ main :: proc() {
 		dt := rl.GetFrameTime()
 		time += dt
 
-		// Camera always updates in 3D mode (used by both CPU and GPU paths)
-		if demo_mode == 3 {
-			camera_update(&cam, dt)
-		}
-
-		// GPU path: compute shader handles everything, skip CPU fill
-		if render_path == .GPU && cp.enabled {
-			compute_run(&cp, demo_mode, time, &grid, int(demo_blend), &cam)
-		} else {
-			// CPU/Hybrid path: CPU fills the grid buffer
+		// Demo mode scene updates (skipped in canvas mode)
+		if !canvas_mode {
 			if demo_mode == 3 {
-				fill_3d_demo(&grid, &db, &cam, &palette, &scene_lights, time)
+				camera_update(&cam, dt)
 			}
-			if demo_mode == 4 {
-				fill_layers_demo(&grid, &ls, &palette, time)
+			if render_path == .GPU && cp.enabled {
+				compute_run(&cp, demo_mode, time, &grid, int(demo_blend), &cam)
+			} else {
+				if demo_mode == 3 {
+					fill_3d_demo(&grid, &db, &cam, &palette, &scene_lights, time)
+				}
+				if demo_mode == 4 {
+					fill_layers_demo(&grid, &ls, &palette, time)
+				}
 			}
-		}
 
-		// Cycle blend mode in solver demo
-		if demo_mode == 1 && rl.IsKeyPressed(.B) {
-			demo_blend = BlendMode((int(demo_blend) + 1) % 4)
-			refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
+			if demo_mode == 1 && rl.IsKeyPressed(.B) {
+				demo_blend = BlendMode((int(demo_blend) + 1) % 4)
+				refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
+			}
 		}
 
 		// Toggle cursor
@@ -205,6 +204,14 @@ main :: proc() {
 			grid.fidelity = Fidelity((int(grid.fidelity) + 1) % 5)
 		}
 		if rl.IsKeyPressed(.F6) { render_path = RenderPath((int(render_path) + 1) % RENDER_PATH_COUNT) }
+		if rl.IsKeyPressed(.F9) {
+			canvas_mode = !canvas_mode
+			if canvas_mode {
+				clear_grid(&grid, palette_get(&palette, "dark"))
+			} else {
+				refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
+			}
+		}
 		if rl.IsKeyPressed(.F12) { export_screenshot() }
 
 		// Save current scene
@@ -290,6 +297,11 @@ main :: proc() {
 			imgui.Text(cstring(raw_data(fid_buf[:])))
 
 			imgui.Separator()
+			app_mode: cstring = canvas_mode ? "CANVAS" : "DEMO"
+			am_buf: [32]u8
+			fmt.bprintf(am_buf[:], "App: %s (F9)\x00", app_mode)
+			imgui.Text(cstring(raw_data(am_buf[:])))
+
 			mode_names := [6]cstring{"Random", "Solver", "Primitives", "3D", "Layers", "Compute"}
 			mode_buf: [32]u8
 			fmt.bprintf(mode_buf[:], "Mode: %s\x00", mode_names[demo_mode])
