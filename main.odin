@@ -8,8 +8,8 @@ import "core:strings"
 import imgui "lib:odin-imgui"
 import rlimgui "lib:imgui_impl_raylib"
 
-SCREEN_W     :: 1920
-SCREEN_H     :: 1080
+SCREEN_W     :: 2560
+SCREEN_H     :: 1440
 INIT_FONT_SZ :: i32(20)
 FONT_PATH    :: "assets/JetBrainsMonoNLNerdFont-Regular.ttf"
 
@@ -212,6 +212,7 @@ main :: proc() {
 				refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
 			}
 		}
+		if rl.IsKeyPressed(.F11) { rl.ToggleBorderlessWindowed() }
 		if rl.IsKeyPressed(.F12) { export_screenshot() }
 
 		// Save current scene
