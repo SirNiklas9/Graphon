@@ -25,6 +25,13 @@ GPUGrid :: struct {
 	fidelity_loc:     i32,
 	compute_mode_loc: i32,
 	glyph_rect_locs: [32]i32,
+
+	// Cached state — only re-upload when changed
+	cached_cols:      int,
+	cached_rows:      int,
+	cached_font_id:   u32,
+	glyphs_uploaded:  bool,
+	statics_uploaded: bool,
 }
 
 gpu_grid_create :: proc(cols, rows: int) -> GPUGrid {
@@ -147,32 +154,47 @@ gpu_grid_upload :: proc(gg: ^GPUGrid, grid: ^Grid) {
 gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bool = false, override_tex: rl.Texture2D = {}) {
 	if !gg.enabled do return
 
-	res := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
-	rl.SetShaderValue(gg.shader, gg.resolution_loc, &res, .VEC2)
+	// Only re-upload static uniforms when grid/font changes
+	grid_changed := grid.cols != gg.cached_cols || grid.rows != gg.cached_rows
+	font_changed := font.texture.id != gg.cached_font_id
 
-	gs := [2]f32{f32(grid.cols), f32(grid.rows)}
-	rl.SetShaderValue(gg.shader, gg.grid_size_loc, &gs, .VEC2)
+	if grid_changed || !gg.statics_uploaded {
+		res := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
+		rl.SetShaderValue(gg.shader, gg.resolution_loc, &res, .VEC2)
 
-	cs := [2]f32{grid.cell_w, grid.cell_h}
-	rl.SetShaderValue(gg.shader, gg.cell_size_loc, &cs, .VEC2)
+		gs := [2]f32{f32(grid.cols), f32(grid.rows)}
+		rl.SetShaderValue(gg.shader, gg.grid_size_loc, &gs, .VEC2)
 
-	as := [2]f32{f32(font.texture.width), f32(font.texture.height)}
-	rl.SetShaderValue(gg.shader, gg.atlas_size_loc, &as, .VEC2)
+		cs := [2]f32{grid.cell_w, grid.cell_h}
+		rl.SetShaderValue(gg.shader, gg.cell_size_loc, &cs, .VEC2)
 
+		gg.cached_cols = grid.cols
+		gg.cached_rows = grid.rows
+		gg.statics_uploaded = true
+	}
+
+	if font_changed || !gg.glyphs_uploaded {
+		as := [2]f32{f32(font.texture.width), f32(font.texture.height)}
+		rl.SetShaderValue(gg.shader, gg.atlas_size_loc, &as, .VEC2)
+
+		chars := ALL_CODEPOINTS
+		for i in 0 ..< 32 {
+			gi := rl.GetGlyphIndex(font, chars[i])
+			rec := font.recs[gi]
+			glyph_rect := [4]f32{rec.x, rec.y, rec.width, rec.height}
+			rl.SetShaderValue(gg.shader, gg.glyph_rect_locs[i], &glyph_rect, .VEC4)
+		}
+
+		gg.cached_font_id = font.texture.id
+		gg.glyphs_uploaded = true
+	}
+
+	// These change per-frame
 	fid := i32(grid.fidelity)
 	rl.SetShaderValue(gg.shader, gg.fidelity_loc, &fid, .INT)
 
 	cm := i32(is_compute ? 1 : 0)
 	rl.SetShaderValue(gg.shader, gg.compute_mode_loc, &cm, .INT)
-
-	// Upload glyph rectangles (cached locations)
-	chars := ALL_CODEPOINTS
-	for i in 0 ..< 32 {
-		gi := rl.GetGlyphIndex(font, chars[i])
-		rec := font.recs[gi]
-		glyph_rect := [4]f32{rec.x, rec.y, rec.width, rec.height}
-		rl.SetShaderValue(gg.shader, gg.glyph_rect_locs[i], &glyph_rect, .VEC4)
-	}
 
 	// Bind bg to unit 1, font atlas to unit 2
 	bg_unit: i32 = 1
@@ -193,7 +215,7 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bo
 
 	rl.BeginShaderMode(gg.shader)
 	src := rl.Rectangle{0, 0, f32(draw_tex.width), f32(draw_tex.height)}
-	dst := rl.Rectangle{0, 0, res[0], res[1]}
+	dst := rl.Rectangle{0, 0, f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
 	rl.DrawTexturePro(draw_tex, src, dst, {0, 0}, 0, rl.WHITE)
 	rl.EndShaderMode()
 

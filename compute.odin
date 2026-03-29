@@ -16,6 +16,14 @@ ComputePipeline :: struct {
 	time_locs:     [7]i32,
 	gridsize_locs: [7]i32,
 	extra_locs:    [7]i32, // mode-specific (blendMode for solver, etc.)
+
+	// Cached locations for 3D mode
+	cam_pos_loc:    i32,
+	cam_target_loc: i32,
+	screen_res_loc: i32,
+	// Cached locations for scene mode
+	scene_res_loc:  i32,
+	scene_cs_loc:   i32,
 }
 
 COMPUTE_SHADER_PATHS :: [7]cstring{
@@ -51,6 +59,17 @@ compute_create :: proc(cols, rows: int) -> ComputePipeline {
 
 	cp.target = rl.LoadRenderTexture(i32(cols), i32(rows))
 	rl.SetTextureFilter(cp.target.texture, .POINT)
+
+	// Cache mode-specific locations
+	if cp.shaders[3].id != 0 {
+		cp.cam_pos_loc = rl.GetShaderLocation(cp.shaders[3], "camPos")
+		cp.cam_target_loc = rl.GetShaderLocation(cp.shaders[3], "camTarget")
+		cp.screen_res_loc = rl.GetShaderLocation(cp.shaders[3], "screenRes")
+	}
+	if cp.shaders[5].id != 0 {
+		cp.scene_res_loc = rl.GetShaderLocation(cp.shaders[5], "resolution")
+		cp.scene_cs_loc = rl.GetShaderLocation(cp.shaders[5], "cellSize")
+	}
 
 	cp.enabled = all_loaded
 	return cp
@@ -94,24 +113,19 @@ compute_run :: proc(cp: ^ComputePipeline, demo_mode: int, time_val: f32, grid: ^
 		bm := i32(blend_mode)
 		rl.SetShaderValue(shader, cp.extra_locs[demo_mode], &bm, .INT)
 	}
-	if demo_mode == 3 && cam != nil { // 3D camera + screen res
-		cam_pos_loc := rl.GetShaderLocation(shader, "camPos")
-		cam_target_loc := rl.GetShaderLocation(shader, "camTarget")
-		screen_res_loc := rl.GetShaderLocation(shader, "screenRes")
+	if demo_mode == 3 && cam != nil {
 		pos := cam.rl_cam.position
 		tgt := cam.rl_cam.target
 		res := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
-		rl.SetShaderValue(shader, cam_pos_loc, &pos, .VEC3)
-		rl.SetShaderValue(shader, cam_target_loc, &tgt, .VEC3)
-		rl.SetShaderValue(shader, screen_res_loc, &res, .VEC2)
+		rl.SetShaderValue(shader, cp.cam_pos_loc, &pos, .VEC3)
+		rl.SetShaderValue(shader, cp.cam_target_loc, &tgt, .VEC3)
+		rl.SetShaderValue(shader, cp.screen_res_loc, &res, .VEC2)
 	}
-	if demo_mode == 6 { // scene needs resolution + cellsize
-		res_loc := rl.GetShaderLocation(shader, "resolution")
-		cs_loc := rl.GetShaderLocation(shader, "cellSize")
+	if demo_mode == 5 {
 		res := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
 		cs := [2]f32{grid.cell_w, grid.cell_h}
-		rl.SetShaderValue(shader, res_loc, &res, .VEC2)
-		rl.SetShaderValue(shader, cs_loc, &cs, .VEC2)
+		rl.SetShaderValue(shader, cp.scene_res_loc, &res, .VEC2)
+		rl.SetShaderValue(shader, cp.scene_cs_loc, &cs, .VEC2)
 	}
 
 	// Render to grid-sized texture
