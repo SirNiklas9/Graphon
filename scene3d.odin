@@ -268,10 +268,11 @@ scene3d_update_lights :: proc(s: ^Scene3D) {
 
 // Draw all scene geometry — shared between shadow pass and color pass
 // use_shader: false for shadow pass (depth only), true for color pass
-scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, use_shader: bool = true) {
-	// Solid ground plane — only in color pass (receives shadows, doesn't cast them)
-	if use_shader {
-		rl.DrawPlane({0, 0, 0}, {40, 40}, {120, 115, 105, 255})
+// draw_fn: optional callback for custom primitives (ground, cubes, etc.)
+scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, use_shader: bool = true, draw_fn: proc(^Scene3D, bool) = nil) {
+	// Custom draw callback (ground, primitives, etc.)
+	if draw_fn != nil {
+		draw_fn(s, use_shader)
 	}
 
 	// Scene objects (models)
@@ -283,7 +284,6 @@ scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, u
 				obj.model.materials[mi].shader = s.shader
 			}
 
-			// Bind normal map if present
 			has_nmap := i32(obj.normal_map.id != 0 ? 1 : 0)
 			rl.SetShaderValue(s.shader, s.has_normal_map_loc, &has_nmap, .INT)
 			if obj.normal_map.id != 0 {
@@ -309,7 +309,6 @@ scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, u
 			obj.tint,
 		)
 
-		// Unbind normal map
 		if use_shader && obj.normal_map.id != 0 {
 			rlgl.ActiveTextureSlot(3)
 			rlgl.DisableTexture()
@@ -317,16 +316,6 @@ scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, u
 			no_nmap: i32 = 0
 			rl.SetShaderValue(s.shader, s.has_normal_map_loc, &no_nmap, .INT)
 		}
-	}
-
-	// Scene primitives
-	rl.DrawCubeV({0, 2, 0}, {3, 3, 3}, {220, 50, 40, 255})
-
-	// Pillars
-	pillar_colors := [4]rl.Color{{50, 200, 80, 255}, {80, 100, 220, 255}, {200, 80, 180, 255}, {80, 200, 200, 255}}
-	pillar_pos := [4]rl.Vector3{{-8, 3, -5}, {8, 3, -5}, {-8, 3, 5}, {8, 3, 5}}
-	for i in 0 ..< 4 {
-		rl.DrawCylinder(pillar_pos[i], 0.6, 0.6, 6, 32, pillar_colors[i])
 	}
 }
 
@@ -336,6 +325,7 @@ scene3d_render :: proc(
 	cam: ^Camera,
 	models: []Scene3DObject,
 	time: f32,
+	draw_fn: proc(^Scene3D, bool) = nil,
 ) {
 	if !s.enabled do return
 
@@ -351,7 +341,7 @@ scene3d_render :: proc(
 
 	if has_shadow {
 		shadow_begin(&s.shadow, &s.lights[shadow_light_idx], {0, 0, 0}, 25)
-		scene3d_draw_geometry(s, models, time, false) // depth only, no lighting shader
+		scene3d_draw_geometry(s, models, time, false, draw_fn) // depth only, no lighting shader
 		shadow_end(&s.shadow)
 	}
 
@@ -434,7 +424,7 @@ scene3d_render :: proc(
 
 	rl.BeginShaderMode(s.shader)
 
-	scene3d_draw_geometry(s, models, time)
+	scene3d_draw_geometry(s, models, time, true, draw_fn)
 
 	// Light indicator spheres (drawn after geometry, unaffected by shadow)
 	for i in 0 ..< s.light_count {
@@ -465,7 +455,7 @@ scene3d_render :: proc(
 		rl.ClearBackground(rl.WHITE) // Far = white (1.0)
 		rl.BeginMode3D(cam.rl_cam)
 		rl.BeginShaderMode(s.depth_shader)
-		scene3d_draw_geometry(s, models, time)
+		scene3d_draw_geometry(s, models, time, true, draw_fn)
 		rl.EndShaderMode()
 		rl.EndMode3D()
 		rl.EndTextureMode()
