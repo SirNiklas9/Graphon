@@ -327,6 +327,7 @@ scene3d_render :: proc(
 	time: f32,
 	draw_fn: proc(^Scene3D, bool) = nil,
 	cfg: ^Config = nil,
+	particles: []RenderParticle = nil,
 ) {
 	if !s.enabled do return
 
@@ -439,6 +440,12 @@ scene3d_render :: proc(
 	}
 
 	rl.EndShaderMode()
+
+	// Draw particles (after geometry, additive blending, no lighting shader)
+	if len(particles) > 0 {
+		draw_particles(particles, cam)
+	}
+
 	rl.EndMode3D()
 	rl.EndTextureMode()
 
