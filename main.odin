@@ -10,263 +10,210 @@ import rlimgui "lib:imgui_impl_raylib"
 
 SCREEN_W     :: 1920
 SCREEN_H     :: 1080
-INIT_FONT_SZ :: i32(20)
+INIT_FONT_SZ :: i32(1)
 FONT_PATH    :: "assets/JetBrainsMonoNLNerdFont-Regular.ttf"
 
+// Demo draw callback — draws primitives that live in the demo, NOT the renderer
+demo_draw :: proc(s3d: ^Scene3D, use_shader: bool) {
+	// Ground plane — only in color pass (receives shadows, doesn't cast them)
+	if use_shader {
+		rl.DrawPlane({0, 0, 0}, {40, 40}, {120, 115, 105, 255})
+	}
+
+	// Cube
+	rl.DrawCubeV({0, 2, 0}, {3, 3, 3}, {220, 50, 40, 255})
+
+	// Pillars
+	pillar_colors := [4]rl.Color{{50, 200, 80, 255}, {80, 100, 220, 255}, {200, 80, 180, 255}, {80, 200, 200, 255}}
+	pillar_pos := [4]rl.Vector3{{-8, 3, -5}, {8, 3, -5}, {-8, 3, 5}, {8, 3, 5}}
+	for i in 0 ..< 4 {
+		rl.DrawCylinder(pillar_pos[i], 0.6, 0.6, 6, 32, pillar_colors[i])
+	}
+}
 
 main :: proc() {
 	rl.InitWindow(SCREEN_W, SCREEN_H, "Graphon")
 	defer rl.CloseWindow()
-	rl.SetTargetFPS(0) // uncapped — see true performance
+	rl.SetTargetFPS(0)
 
-	// ImGui setup
+	// ImGui
 	imgui.CreateContext(nil)
 	defer imgui.DestroyContext(nil)
 	rlimgui.init()
 	defer rlimgui.shutdown()
 
-	font := load_font(INIT_FONT_SZ)
-	defer rl.UnloadFont(font)
+	// --- Graphon renderer ---
+	g := graphon_init(SCREEN_W, SCREEN_H, FONT_PATH, INIT_FONT_SZ)
+	defer graphon_destroy(&g)
 
+	// --- 3D Scene ---
+	scene := scene_create()
+	scene.camera = camera_create({-8, 6, 14}, {0, 1, 0})
+
+	// Lights
+	scene_add_light(&scene, .Directional, {10, 15, 5}, {-1, 0, -0.5}, {0.9, 0.75, 0.5})
+	orbit_light_idx := scene_add_light(&scene, .Point, {8, 3, 0}, {0, 0, 0}, {1.2, 0.8, 0.3})
+	scene_add_light(&scene, .Point, {-6, 4, -6}, {0, 0, 0}, {0.2, 0.3, 0.8})
+	scene_add_light(&scene, .Point, {8, 3, 8}, {0, 0, 0}, {0.15, 0.6, 0.2})
+
+	// Volumes
+	scene_add_volume(&scene, {-20, -1, -20}, {-5, 10, 20}, {0.05, 0.08, 0.2}, 0.3)
+
+	// Model
+	suzanne := rl.LoadModel("assets/suzanne.obj")
+	defer rl.UnloadModel(suzanne)
+	scene_add_model(&scene, suzanne, {-5, 2, 0}, material_create({255, 165, 50, 255}), 2.0)
+	// Make Suzanne auto-rotate
+	scene.objects[scene.object_count - 1].auto_rotate = true
+	scene.objects[scene.object_count - 1].rotate_speed = 0.5
+
+	// --- 2D state (demos) ---
 	palette := palette_create()
 	defer palette_destroy(&palette)
 	palette_default(&palette)
 
-	grid: Grid
-	grid_init(&grid, SCREEN_W, SCREEN_H, font, INIT_FONT_SZ)
-	defer grid_destroy(&grid)
-
 	patterns := pattern_lib_create()
 	defer pattern_lib_destroy(&patterns)
+	pattern_define(&patterns, "heart", {".#.#.", "#####", "#####", ".###.", "..#.."}, palette_get(&palette, "red"))
+	pattern_define(&patterns, "star", {"..#..", ".###.", "#####", ".###.", "..#.."}, palette_get(&palette, "yellow"))
 
-	// Define some demo patterns
-	pattern_define(&patterns, "heart", {
-		".#.#.",
-		"#####",
-		"#####",
-		".###.",
-		"..#..",
-	}, palette_get(&palette, "red"))
-
-	pattern_define(&patterns, "star", {
-		"..#..",
-		".###.",
-		"#####",
-		".###.",
-		"..#..",
-	}, palette_get(&palette, "yellow"))
-
-	demo_mode: int = 0 // 0=random, 1=solver, 2=primitives, 3=3D, 4=layers
-	demo_blend := BlendMode.Normal
-
-	// Layer stack
-	ls := layer_stack_create(grid.cols, grid.rows)
+	ls := layer_stack_create(g.grid.cols, g.grid.rows)
 	defer layer_stack_destroy(&ls)
 
-	// Compute pipeline (GPU-generated scenes)
-	cp := compute_create(grid.cols, grid.rows)
+	cp := compute_create(g.grid.cols, g.grid.rows)
 	defer compute_destroy(&cp)
 
-	// 3D state
-	cam := camera_create({-8, 6, 14}, {0, 1, 0})
-	db := depth_buffer_create(grid.cols, grid.rows)
+	// Dead code — kept for 2D depth debug, cleanup later
+	db := depth_buffer_create(g.grid.cols, g.grid.rows)
 	defer depth_buffer_destroy(&db)
+
+	demo_mode: int = 0
+	demo_blend := BlendMode.Normal
+	canvas_mode := false
 	time: f32 = 0
-
-	// Lighting
-	cfg := config_default()
-
-	// Model loading
-	suzanne := rl.LoadModel("assets/suzanne.obj")
-	defer rl.UnloadModel(suzanne)
-
-	// GPU 3D scene renderer (Raylib native 3D → Grafel glyph shader)
-	scene3d := scene3d_create(grid.cols, grid.rows)
-	defer scene3d_destroy(&scene3d)
-
-	// Lights
-	scene3d_add_light(&scene3d, .Directional, {10, 15, 5}, {-1, 0, -0.5}, {0.9, 0.75, 0.5})             // golden sun, angled for long shadows
-	orbit_light_idx := scene3d_add_light(&scene3d, .Point, {8, 3, 0}, {0, 0, 0}, {1.2, 0.8, 0.3})     // warm torch, close to ground, very visible
-	scene3d_add_light(&scene3d, .Point, {-6, 4, -6}, {0, 0, 0}, {0.2, 0.3, 0.8})                      // cool blue fill
-	scene3d_add_light(&scene3d, .Point, {8, 3, 8}, {0, 0, 0}, {0.15, 0.6, 0.2})                       // green accent
-
-	// GPU pipeline (post-process)
-	gpu := gpu_create(SCREEN_W, SCREEN_H)
-	defer gpu_destroy(&gpu)
-
-	// GPU grid renderer (hybrid + GPU display)
-	gg := gpu_grid_create(grid.cols, grid.rows)
-	defer gpu_grid_destroy(&gg)
 
 	mouse: Mouse
 	show_cursor := true
 	paint_color := palette_get(&palette, "white")
-	canvas_mode := false // false = Demo, true = Canvas
 
-	randomize_grid(&grid)
+	randomize_grid(&g.grid)
 
 	for !rl.WindowShouldClose() {
-		// Update mouse
-		mouse_update(&mouse, &grid)
-		// Font size adjustment
-		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer, ls: ^LayerStack, gg_ptr: ^GPUGrid, cp_ptr: ^ComputePipeline, s3d: ^Scene3D = nil) {
-			resize_font(grid, font, new_size, demo_mode, palette, blend, patterns)
-			depth_buffer_resize(db, grid.cols, grid.rows)
-			layer_stack_resize(ls, grid.cols, grid.rows)
-			gpu_grid_resize(gg_ptr, grid.cols, grid.rows)
-			compute_resize(cp_ptr, grid.cols, grid.rows)
-			if s3d != nil { scene3d_resize(s3d, grid.cols, grid.rows) }
-		}
-		if rl.IsKeyPressed(.UP) {
-			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, &scene3d)
-		}
-		if rl.IsKeyPressed(.DOWN) {
-			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, &scene3d)
-		}
-		if rl.IsKeyPressed(.LEFT) {
-			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, &scene3d)
-		}
-		if rl.IsKeyPressed(.RIGHT) {
-			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, &scene3d)
-		}
-
-		// Cycle demo mode: 0=random, 1=solver, 2=primitives, 3=3D, 4=layers, 5=compute
-		if rl.IsKeyPressed(.TAB) {
-			demo_mode = (demo_mode + 1) % 7
-			if demo_mode != 3 && demo_mode != 4 && demo_mode != 5 && demo_mode != 6 {
-				refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
-			}
-		}
-
-		// Global time — always advances
+		mouse_update(&mouse, &g.grid)
 		dt := rl.GetFrameTime()
 		time += dt
 
-		// Demo mode scene updates (skipped in canvas mode)
+		// Font size
+		if rl.IsKeyPressed(.UP)    { graphon_resize_font(&g, g.font_size + 2); layer_stack_resize(&ls, g.grid.cols, g.grid.rows); compute_resize(&cp, g.grid.cols, g.grid.rows); refresh_demo(&g.grid, demo_mode, &palette, demo_blend, &patterns) }
+		if rl.IsKeyPressed(.DOWN)  { graphon_resize_font(&g, g.font_size - 2); layer_stack_resize(&ls, g.grid.cols, g.grid.rows); compute_resize(&cp, g.grid.cols, g.grid.rows); refresh_demo(&g.grid, demo_mode, &palette, demo_blend, &patterns) }
+		if rl.IsKeyPressed(.LEFT)  { graphon_resize_font(&g, g.font_size - 1); layer_stack_resize(&ls, g.grid.cols, g.grid.rows); compute_resize(&cp, g.grid.cols, g.grid.rows); refresh_demo(&g.grid, demo_mode, &palette, demo_blend, &patterns) }
+		if rl.IsKeyPressed(.RIGHT) { graphon_resize_font(&g, g.font_size + 1); layer_stack_resize(&ls, g.grid.cols, g.grid.rows); compute_resize(&cp, g.grid.cols, g.grid.rows); refresh_demo(&g.grid, demo_mode, &palette, demo_blend, &patterns) }
+
+		// Mode cycling
+		if rl.IsKeyPressed(.TAB) {
+			demo_mode = (demo_mode + 1) % 7
+			if demo_mode != 3 && demo_mode != 4 && demo_mode != 5 && demo_mode != 6 {
+				refresh_demo(&g.grid, demo_mode, &palette, demo_blend, &patterns)
+			}
+		}
+
+		// Scene updates
 		if !canvas_mode {
 			if demo_mode == 3 {
-				camera_update(&cam, dt)
-			}
-			is_compute_mode := demo_mode >= 5
-			// Compute shaders for GPU-only modes
-			if is_compute_mode && cp.enabled && demo_mode != 3 {
-				compute_run(&cp, demo_mode, time, &grid, int(demo_blend), &cam)
-			}
-			// 3D mode: Raylib native GPU renderer → identical across all display paths
-			if demo_mode == 3 {
-				// Orbit the warm torch light — low and close for visible ground pool
+				camera_update(&scene.camera, dt)
+
+				// Orbit warm light
 				if orbit_light_idx >= 0 {
-					scene3d.lights[orbit_light_idx].position = {
+					scene.lights[orbit_light_idx].position = {
 						math.cos(time * 0.5) * 6,
 						2.5,
 						math.sin(time * 0.5) * 6,
 					}
 				}
-				scene_objects := [1]Scene3DObject{
-					{model = suzanne, loaded = suzanne.meshCount > 0, position = {-5, 2, 0}, scale = 2.0, auto_rotate = true, rotate_speed = 0.5, tint = {255, 165, 50, 255}},
+
+				// Sync lights to renderer
+				g.scene3d.light_count = 0
+				for i in 0 ..< scene.light_count {
+					l := &scene.lights[i]
+					scene3d_add_light(&g.scene3d, l.type, l.position, l.target, l.color)
 				}
-				scene3d_render(&scene3d, &cam, scene_objects[:], time)
+
+				// Render 3D
+				scene3d_render(&g.scene3d, &scene.camera, scene.objects[:scene.object_count], time, demo_draw)
+			}
+
+			is_compute_mode := demo_mode >= 5
+			if is_compute_mode && cp.enabled && demo_mode != 3 {
+				compute_run(&cp, demo_mode, time, &g.grid, int(demo_blend), &scene.camera)
 			}
 			if !is_compute_mode && demo_mode != 3 {
 				if demo_mode == 4 {
-					fill_layers_demo(&grid, &ls, &palette, time)
+					fill_layers_demo(&g.grid, &ls, &palette, time)
 				}
 			}
-
 			if demo_mode == 1 && rl.IsKeyPressed(.B) {
 				demo_blend = BlendMode((int(demo_blend) + 1) % 4)
-				refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
+				refresh_demo(&g.grid, demo_mode, &palette, demo_blend, &patterns)
 			}
 		}
 
-		// Toggle cursor
-		if rl.IsKeyPressed(.C) {
-			show_cursor = !show_cursor
-		}
-
-		// Paint with mouse (left = paint, right = erase)
+		// Input
+		if rl.IsKeyPressed(.C) { show_cursor = !show_cursor }
 		io := imgui.GetIO()
-		imgui_wants_mouse := io.WantCaptureMouse
-		if mouse.in_bounds && !imgui_wants_mouse {
-			if mouse.left {
-				plot_grafel(&grid, mouse.col, mouse.row, paint_color, 1.0)
-			}
+		if mouse.in_bounds && !io.WantCaptureMouse {
+			if mouse.left { plot_grafel(&g.grid, mouse.col, mouse.row, paint_color, 1.0) }
 			if mouse.right {
 				bg := [4]u8{32, 32, 32, 255}
-				grid_set(&grid, mouse.col, mouse.row, Grafel{char = '█', fg = bg, bg = bg})
+				grid_set(&g.grid, mouse.col, mouse.row, Grafel{char = '█', fg = bg, bg = bg})
 			}
 		}
-
-		// Re-randomize / refresh on SPACE
-		if rl.IsKeyPressed(.SPACE) {
-			refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
-		}
+		if rl.IsKeyPressed(.SPACE) { refresh_demo(&g.grid, demo_mode, &palette, demo_blend, &patterns) }
 
 		// Debug toggles
-		if rl.IsKeyPressed(.F1) { cfg.show_grid_lines = !cfg.show_grid_lines }
-		if rl.IsKeyPressed(.F2) { cfg.show_cell_coords = !cfg.show_cell_coords }
-		if rl.IsKeyPressed(.F3) && demo_mode == 3 { cfg.show_depth = !cfg.show_depth }
-		if rl.IsKeyPressed(.F4) { gpu_cycle_fx(&gpu) }
+		if rl.IsKeyPressed(.F1) { g.config.show_grid_lines = !g.config.show_grid_lines }
+		if rl.IsKeyPressed(.F2) { g.config.show_cell_coords = !g.config.show_cell_coords }
+		if rl.IsKeyPressed(.F4) { graphon_cycle_fx(&g) }
 		if rl.IsKeyPressed(.F7) {
-			grid.forced_fidelity = !grid.forced_fidelity
-			if !grid.forced_fidelity {
-				grid.fidelity = .ALL
-			}
+			g.grid.forced_fidelity = !g.grid.forced_fidelity
+			if !g.grid.forced_fidelity { g.grid.fidelity = .ALL }
 		}
-		if rl.IsKeyPressed(.F8) && grid.forced_fidelity {
-			grid.fidelity = Fidelity((int(grid.fidelity) + 1) % 5)
+		if rl.IsKeyPressed(.F8) && g.grid.forced_fidelity {
+			g.grid.fidelity = Fidelity((int(g.grid.fidelity) + 1) % 5)
 		}
-		// F6 was render path toggle — removed, single GPU path now
 		if rl.IsKeyPressed(.F9) {
 			canvas_mode = !canvas_mode
-			if canvas_mode {
-				clear_grid(&grid, palette_get(&palette, "dark"))
-			} else {
-				refresh_demo(&grid, demo_mode, &palette, demo_blend, &patterns)
-			}
+			if canvas_mode { clear_grid(&g.grid, palette_get(&palette, "dark")) }
+			else { refresh_demo(&g.grid, demo_mode, &palette, demo_blend, &patterns) }
 		}
 		if rl.IsKeyPressed(.F11) { rl.ToggleBorderlessWindowed() }
 		if rl.IsKeyPressed(.F12) { export_screenshot() }
+		if rl.IsKeyPressed(.F5) { save_scene(&g.grid, "scene.grf") }
 
-		// Save current scene
-		if rl.IsKeyPressed(.F5) { save_scene(&grid, "scene.grf") }
-
-		// Debug: depth buffer visualization (replaces grid content)
-		if cfg.show_depth && demo_mode == 3 {
-			debug_depth_buffer(&grid, &db)
-		}
-
-		// Render Grafel grid with cursor overlay to GPU render texture
+		// Cursor overlay
 		saved_cell: Grafel
 		cursor_active := show_cursor && mouse.in_bounds
 		if cursor_active {
-			saved_cell = grid_get(&grid, mouse.col, mouse.row)
-			draw_cursor(&grid, &mouse)
+			saved_cell = grid_get(&g.grid, mouse.col, mouse.row)
+			draw_cursor(&g.grid, &mouse)
 		}
 
-		use_postfx := gpu.active_fx != .None
+		// --- Render ---
+		use_postfx := g.gpu.active_fx != .None
 
-		if use_postfx {
-			gpu_begin(&gpu)
-		} else {
-			rl.BeginDrawing()
-			rl.ClearBackground(rl.BLACK)
-		}
+		if use_postfx { gpu_begin(&g.gpu) }
+		else { rl.BeginDrawing(); rl.ClearBackground(rl.BLACK) }
 
-		// Determine GPU texture source
 		is_gpu_only_mode := demo_mode >= 5
 		has_gpu_tex := false
 		gpu_tex: rl.Texture2D
 		gpu_cols, gpu_rows: int
 
-		if demo_mode == 3 && scene3d.enabled {
-			// 3D mode: final output (with SSAO if enabled), Grafel grid cell dimensions
+		if demo_mode == 3 && g.scene3d.enabled {
 			has_gpu_tex = true
-			gpu_tex = scene3d_get_output(&scene3d)
-			gpu_cols = grid.cols
-			gpu_rows = grid.rows
+			gpu_tex = scene3d_get_output(&g.scene3d)
+			gpu_cols = g.grid.cols
+			gpu_rows = g.grid.rows
 		} else if is_gpu_only_mode && cp.enabled && cp.target.texture.id != 0 {
-			// Compute modes
 			has_gpu_tex = true
 			gpu_tex = cp.target.texture
 			gpu_cols = cp.cols
@@ -274,117 +221,66 @@ main :: proc() {
 		}
 
 		if has_gpu_tex {
-			gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
+			gpu_grid_render(&g.gpu_grid, &g.grid, g.font, true, gpu_tex, gpu_cols, gpu_rows)
 		} else {
-			gpu_grid_upload(&gg, &grid)
-			gpu_grid_render(&gg, &grid, font)
+			gpu_grid_upload(&g.gpu_grid, &g.grid)
+			gpu_grid_render(&g.gpu_grid, &g.grid, g.font)
 		}
-		// GPU mode always uses ALL fidelity — shader handles character selection
 
-		// Debug overlays — always use Grafel grid dimensions
-		overlay_cols := gpu_cols > 0 ? gpu_cols : grid.cols
-		overlay_rows := gpu_rows > 0 ? gpu_rows : grid.rows
-		if cfg.show_grid_lines { debug_grid_lines(&grid, overlay_cols, overlay_rows) }
-		if cfg.show_cell_coords { debug_cell_coords(&grid, font, overlay_cols, overlay_rows) }
+		// Debug overlays
+		overlay_cols := gpu_cols > 0 ? gpu_cols : g.grid.cols
+		overlay_rows := gpu_rows > 0 ? gpu_rows : g.grid.rows
+		if g.config.show_grid_lines { debug_grid_lines(&g.grid, overlay_cols, overlay_rows) }
+		if g.config.show_cell_coords { debug_cell_coords(&g.grid, g.font, overlay_cols, overlay_rows) }
 
 		if use_postfx {
-			gpu_end(&gpu)
+			gpu_end(&g.gpu)
 			rl.BeginDrawing()
 			rl.ClearBackground(rl.BLACK)
-			gpu_present(&gpu, time)
+			gpu_present(&g.gpu, time)
 		}
 
-		if cursor_active {
-			grid_set(&grid, mouse.col, mouse.row, saved_cell)
-		}
+		if cursor_active { grid_set(&g.grid, mouse.col, mouse.row, saved_cell) }
 
-		// ImGui overlay
+		// ImGui
 		rlimgui.begin()
-
 		imgui.SetNextWindowPos({10, 10}, .FirstUseEver)
 		imgui.SetNextWindowSize({220, 100}, .FirstUseEver)
 		if imgui.Begin("Graphon", nil, {.NoCollapse}) {
 			fps_buf: [32]u8
-			fps_str := fmt.bprintf(fps_buf[:], "FPS: %d\x00", rl.GetFPS())
+			fmt.bprintf(fps_buf[:], "FPS: %d\x00", rl.GetFPS())
 			imgui.Text(cstring(raw_data(fps_buf[:])))
 
 			grid_buf: [64]u8
-			fmt.bprintf(grid_buf[:], "Grid: %dx%d  Cell: %.0fpx\x00", grid.cols, grid.rows, grid.cell_w)
+			fmt.bprintf(grid_buf[:], "Grid: %dx%d  Cell: %.0fpx\x00", g.grid.cols, g.grid.rows, g.grid.cell_w)
 			imgui.Text(cstring(raw_data(grid_buf[:])))
 
 			font_buf: [32]u8
-			fmt.bprintf(font_buf[:], "Font size: %d\x00", grid.font_size)
+			fmt.bprintf(font_buf[:], "Font size: %d\x00", g.grid.font_size)
 			imgui.Text(cstring(raw_data(font_buf[:])))
 
-			fidelity_names := [Fidelity]cstring{
-				.FULL_ONLY  = "FULL_ONLY (rect)",
-				.DENSITY    = "DENSITY",
-				.HALF       = "HALF",
-				.FRACTIONAL = "FRACTIONAL",
-				.ALL        = "ALL",
-			}
+			imgui.Separator()
+			mode_names := [7]cstring{"Random", "Solver", "Primitives", "3D", "Layers", "Compute", "Showcase"}
+			mode_buf: [32]u8
+			fmt.bprintf(mode_buf[:], "Mode: %s (%s)\x00", mode_names[demo_mode], canvas_mode ? "CANVAS" : "DEMO")
+			imgui.Text(cstring(raw_data(mode_buf[:])))
+
+			imgui.Separator()
+			fx_names := [PostFX]cstring{.None = "None", .Bloom = "Bloom", .Scanlines = "Scanlines", .Chromatic = "Chromatic"}
+			fx_buf: [32]u8
+			fmt.bprintf(fx_buf[:], "PostFX: %s\x00", fx_names[g.gpu.active_fx])
+			imgui.Text(cstring(raw_data(fx_buf[:])))
+
+			fid_names := [Fidelity]cstring{.FULL_ONLY = "FULL_ONLY", .DENSITY = "DENSITY", .HALF = "HALF", .FRACTIONAL = "FRACTIONAL", .ALL = "ALL"}
 			fid_buf: [48]u8
-			fmt.bprintf(fid_buf[:], "Fidelity: %s\x00", fidelity_names[grid.fidelity])
+			fmt.bprintf(fid_buf[:], "Fidelity: %s (%s)\x00", fid_names[g.grid.fidelity], g.grid.forced_fidelity ? "forced" : "auto")
 			imgui.Text(cstring(raw_data(fid_buf[:])))
 
 			imgui.Separator()
-			app_mode: cstring = canvas_mode ? "CANVAS" : "DEMO"
-			am_buf: [32]u8
-			fmt.bprintf(am_buf[:], "App: %s (F9)\x00", app_mode)
-			imgui.Text(cstring(raw_data(am_buf[:])))
-
-			mode_names := [7]cstring{"Random", "Solver", "Primitives", "3D", "Layers", "Compute", "Showcase"}
-			mode_buf: [32]u8
-			fmt.bprintf(mode_buf[:], "Mode: %s\x00", mode_names[demo_mode])
-			imgui.Text(cstring(raw_data(mode_buf[:])))
-
-			mouse_buf: [48]u8
-			fmt.bprintf(mouse_buf[:], "Mouse: %d, %d\x00", mouse.col, mouse.row)
-			imgui.Text(cstring(raw_data(mouse_buf[:])))
-
-			if demo_mode == 1 {
-				blend_names := [BlendMode]cstring{
-					.Normal   = "Normal",
-					.Alpha    = "Alpha",
-					.Additive = "Additive",
-					.Multiply = "Multiply",
-				}
-				bl_buf: [32]u8
-				fmt.bprintf(bl_buf[:], "Blend: %s\x00", blend_names[demo_blend])
-				imgui.Text(cstring(raw_data(bl_buf[:])))
-			}
-
-			imgui.Separator()
-			fx_names := [PostFX]cstring{
-				.None      = "None",
-				.Bloom     = "Bloom",
-				.Scanlines = "Scanlines",
-				.Chromatic = "Chromatic",
-			}
-			fx_buf: [32]u8
-			fmt.bprintf(fx_buf[:], "PostFX: %s\x00", fx_names[gpu.active_fx])
-			imgui.Text(cstring(raw_data(fx_buf[:])))
-
-			imgui.Separator()
-			fidelity_level_names := [Fidelity]cstring{
-				.FULL_ONLY  = "FULL_ONLY",
-				.DENSITY    = "DENSITY",
-				.HALF       = "HALF",
-				.FRACTIONAL = "FRACTIONAL",
-				.ALL        = "ALL",
-			}
-			fid_mode: cstring = grid.forced_fidelity ? "FORCED" : "auto"
-			ff_buf: [64]u8
-			fmt.bprintf(ff_buf[:], "Fidelity: %s (%s)\x00", fidelity_level_names[grid.fidelity], fid_mode)
-			imgui.Text(cstring(raw_data(ff_buf[:])))
-
-			imgui.Text("F1:Grid F2:Coords F3:Depth")
-			imgui.Text("F4:PostFX F5:Save")
-			imgui.Text("F7:ForceFidelity F8:CycleFidelity")
-			imgui.Text("F12:Screenshot")
+			imgui.Text("TAB:Mode  WASD:Camera  F4:PostFX")
+			imgui.Text("F7:Fidelity F9:Canvas F12:Screenshot")
 		}
 		imgui.End()
-
 		rlimgui.end()
 		rl.EndDrawing()
 	}
@@ -410,42 +306,25 @@ refresh_demo :: proc(grid: ^Grid, mode: int, palette: ^Palette, blend: BlendMode
 	case 0: randomize_grid(grid)
 	case 1: if palette != nil do fill_solver_demo(grid, palette, blend)
 	case 2: if palette != nil && patterns != nil do fill_primitives_demo(grid, palette, patterns)
-	case 3: // 3D mode refreshes per-frame in main loop
-	case 4: // Layers mode refreshes per-frame in main loop
-	case 5: // Compute mode runs on GPU
-	case 6: // Showcase mode runs on GPU
+	case 3: // 3D renders per-frame
+	case 4: // Layers renders per-frame
+	case 5: // Compute
+	case 6: // Showcase
 	}
 }
 
 randomize_grid :: proc(grid: ^Grid) {
-	// Build available character pool based on fidelity
 	pool: [32]rune
 	pool_len: u32 = 0
-
 	density := DENSITY_CHARS
 	half := HALF_CHARS
 	fractional := FRACTIONAL_CHARS
 	quarter := QUARTER_CHARS
-
-	if grid.fidelity >= .DENSITY {
-		for c in density { pool[pool_len] = c; pool_len += 1 }
-	}
-	if grid.fidelity >= .HALF {
-		for c in half { pool[pool_len] = c; pool_len += 1 }
-	}
-	if grid.fidelity >= .FRACTIONAL {
-		for c in fractional { pool[pool_len] = c; pool_len += 1 }
-	}
-	if grid.fidelity >= .ALL {
-		for c in quarter { pool[pool_len] = c; pool_len += 1 }
-	}
-
-	// FULL_ONLY — just use full block, character won't be drawn anyway
-	if pool_len == 0 {
-		pool[0] = '█'
-		pool_len = 1
-	}
-
+	if grid.fidelity >= .DENSITY    { for c in density     { pool[pool_len] = c; pool_len += 1 } }
+	if grid.fidelity >= .HALF       { for c in half        { pool[pool_len] = c; pool_len += 1 } }
+	if grid.fidelity >= .FRACTIONAL { for c in fractional  { pool[pool_len] = c; pool_len += 1 } }
+	if grid.fidelity >= .ALL        { for c in quarter     { pool[pool_len] = c; pool_len += 1 } }
+	if pool_len == 0 { pool[0] = '█'; pool_len = 1 }
 	for i in 0 ..< len(grid.cells) {
 		grid.cells[i] = Grafel{
 			char = pool[rand.uint32() % pool_len],
@@ -455,10 +334,8 @@ randomize_grid :: proc(grid: ^Grid) {
 	}
 }
 
-// Primitives demo: shapes, text, and patterns
 fill_primitives_demo :: proc(grid: ^Grid, palette: ^Palette, patterns: ^PatternLib) {
 	clear_grid(grid, palette_get(palette, "dark"))
-
 	white := palette_get(palette, "white")
 	red := palette_get(palette, "red")
 	green := palette_get(palette, "green")
@@ -466,131 +343,62 @@ fill_primitives_demo :: proc(grid: ^Grid, palette: ^Palette, patterns: ^PatternL
 	cyan := palette_get(palette, "cyan")
 	yellow := palette_get(palette, "yellow")
 	magenta := palette_get(palette, "magenta")
-
-	// Title
 	draw_text(grid, 2, 1, "GRAPHON", white, {0, 0, 0, 0}, 2)
-
-	// Shapes
 	fill_rect(grid, 2, 12, 12, 6, blue, 0.75)
 	draw_rect(grid, 2, 12, 12, 6, cyan)
 	fill_circle(grid, 26, 15, 5, red, 0.5)
 	draw_circle(grid, 26, 15, 5, yellow)
 	draw_line(grid, 36, 10, 50, 20, green)
 	draw_line(grid, 36, 20, 50, 10, magenta)
-
-	// Text samples
 	draw_text(grid, 2, 22, "ABCDEFGHIJKLM", white)
 	draw_text(grid, 2, 28, "NOPQRSTUVWXYZ", white)
 	draw_text(grid, 2, 34, "0123456789", yellow)
 	draw_text(grid, 2, 40, "HELLO WORLD!", green)
-
-	// Patterns
 	draw_pattern(grid, patterns, 56, 12, "heart")
 	draw_pattern(grid, patterns, 56, 18, "star")
 	draw_pattern(grid, patterns, 64, 12, "heart", blue)
 	draw_pattern(grid, patterns, 64, 18, "star", cyan)
-
-	// Opacity gradient bar
 	for col in 0 ..< min(40, grid.cols - 2) {
 		opacity := f32(col) / 39.0
 		plot_grafel(grid, 2 + col, 47, white, opacity)
 	}
 }
 
-// Layers demo: 5 layers composited together
 fill_layers_demo :: proc(grid: ^Grid, ls: ^LayerStack, palette: ^Palette, time: f32) {
 	layer_clear_all(ls)
-
 	white := palette_get(palette, "white")
 	red := palette_get(palette, "red")
 	green := palette_get(palette, "green")
 	blue := palette_get(palette, "blue")
 	cyan := palette_get(palette, "cyan")
 	yellow := palette_get(palette, "yellow")
-	dark := palette_get(palette, "dark")
-
-	// Layer 0: Background — dark with subtle gradient
 	for row in 0 ..< ls.rows {
 		for col in 0 ..< ls.cols {
 			brightness := u8(20 + int(f32(row) / f32(ls.rows) * 30))
-			layer_set(ls, .Background, col, row, Grafel{
-				char = '█',
-				fg = {brightness, brightness, brightness + 10, 255},
-				bg = {brightness, brightness, brightness + 10, 255},
-			})
+			layer_set(ls, .Background, col, row, Grafel{char = '█', fg = {brightness, brightness, brightness + 10, 255}, bg = {brightness, brightness, brightness + 10, 255}})
 		}
 	}
-
-	// Layer 1: World — static shapes
-	for col in 5 ..< min(45, ls.cols) {
-		for row in 20 ..< min(35, ls.rows) {
-			layer_plot(ls, .World, col, row, blue, 0.75)
-		}
-	}
-	for col in 30 ..< min(60, ls.cols) {
-		for row in 15 ..< min(30, ls.rows) {
-			layer_plot(ls, .World, col, row, green, 0.5)
-		}
-	}
-
-	// Layer 2: Entity — moving circle
+	for col in 5 ..< min(45, ls.cols) { for row in 20 ..< min(35, ls.rows) { layer_plot(ls, .World, col, row, blue, 0.75) } }
+	for col in 30 ..< min(60, ls.cols) { for row in 15 ..< min(30, ls.rows) { layer_plot(ls, .World, col, row, green, 0.5) } }
 	cx := int(f32(ls.cols) / 2 + math.cos(time) * 15)
 	cy := int(f32(ls.rows) / 2 + math.sin(time * 0.7) * 8)
-	for row in cy - 4 ..= cy + 4 {
-		for col in cx - 4 ..= cx + 4 {
-			dx := col - cx
-			dy := row - cy
-			if dx * dx + dy * dy <= 16 {
-				layer_plot(ls, .Entity, col, row, red, 1.0)
-			}
-		}
-	}
-
-	// Layer 3: Effects — pulsing glow around entity
+	for row in cy - 4 ..= cy + 4 { for col in cx - 4 ..= cx + 4 { if (col-cx)*(col-cx)+(row-cy)*(row-cy) <= 16 { layer_plot(ls, .Entity, col, row, red, 1.0) } } }
 	glow_r := 6 + int(math.sin(time * 3) * 2)
-	for row in cy - glow_r ..= cy + glow_r {
-		for col in cx - glow_r ..= cx + glow_r {
-			dx := col - cx
-			dy := row - cy
-			dist_sq := dx * dx + dy * dy
-			if dist_sq <= glow_r * glow_r && dist_sq > 16 {
-				opacity := 1.0 - f32(dist_sq) / f32(glow_r * glow_r)
-				layer_plot(ls, .Effects, col, row, yellow, opacity * 0.6, .Additive)
-			}
-		}
-	}
-
-	// Layer 4: UI — text overlay always on top
-	// Write directly to UI layer buffer using a temporary grid wrapper
-	ui_grid := Grid{
-		cells = ls.layers[LayerID.UI],
-		cols = ls.cols,
-		rows = ls.rows,
-		cell_w = grid.cell_w,
-		cell_h = grid.cell_h,
-		font_size = grid.font_size,
-		fidelity = grid.fidelity,
-	}
+	for row in cy - glow_r ..= cy + glow_r { for col in cx - glow_r ..= cx + glow_r { dist_sq := (col-cx)*(col-cx)+(row-cy)*(row-cy); if dist_sq <= glow_r*glow_r && dist_sq > 16 { layer_plot(ls, .Effects, col, row, yellow, (1.0 - f32(dist_sq)/f32(glow_r*glow_r))*0.6, .Additive) } } }
+	ui_grid := Grid{cells = ls.layers[LayerID.UI], cols = ls.cols, rows = ls.rows, cell_w = grid.cell_w, cell_h = grid.cell_h, font_size = grid.font_size, fidelity = grid.fidelity}
 	draw_text(&ui_grid, 2, 1, "LAYERS DEMO", white)
 	draw_text(&ui_grid, 2, 7, "BG  WORLD  ENTITY  FX  UI", cyan)
-
-	// Composite and output
 	layer_composite(ls)
 	layer_to_grid(ls, grid)
 }
 
-// Solver demo: horizontal opacity gradient using palette colors, one row per color
 fill_solver_demo :: proc(grid: ^Grid, palette: ^Palette, blend: BlendMode) {
 	bg := palette_get(palette, "dark")
 	colors := [7]string{"red", "green", "blue", "cyan", "magenta", "yellow", "orange"}
-
 	for row in 0 ..< grid.rows {
-		color_name := colors[row % len(colors)]
-		fg := palette_get(palette, color_name)
-
+		fg := palette_get(palette, colors[row % len(colors)])
 		for col in 0 ..< grid.cols {
-			opacity := f32(col) / f32(max(grid.cols - 1, 1))
-			grid_set(grid, col, row, solve_cell(fg, opacity, bg, blend))
+			grid_set(grid, col, row, solve_cell(fg, f32(col) / f32(max(grid.cols - 1, 1)), bg, blend))
 		}
 	}
 }
