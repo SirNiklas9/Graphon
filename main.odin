@@ -83,9 +83,6 @@ main :: proc() {
 	cp := compute_create(g.grid.cols, g.grid.rows)
 	defer compute_destroy(&cp)
 
-	// Dead code — kept for 2D depth debug, cleanup later
-	db := depth_buffer_create(g.grid.cols, g.grid.rows)
-	defer depth_buffer_destroy(&db)
 
 	demo_mode: int = 0
 	demo_blend := BlendMode.Normal

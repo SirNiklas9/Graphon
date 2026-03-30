@@ -87,25 +87,6 @@ debug_cell_coords :: proc(grid: ^Grid, font: rl.Font, override_cols: int = 0, ov
 	}
 }
 
-// Debug overlay: show depth buffer as grayscale
-debug_depth_buffer :: proc(grid: ^Grid, db: ^DepthBuffer) {
-	if db == nil do return
-	max_depth: f32 = 60
-
-	for row in 0 ..< min(grid.rows, db.rows) {
-		for col in 0 ..< min(grid.cols, db.cols) {
-			d := db.data[row * db.cols + col]
-			if d >= 1e29 do continue // no depth written
-			brightness := u8(255 - clamp(d / max_depth * 255, 0, 255))
-			grid_set(grid, col, row, Grafel{
-				char = '█',
-				fg = {brightness, brightness, brightness, 255},
-				bg = {brightness, brightness, brightness, 255},
-			})
-		}
-	}
-}
-
 // Take a screenshot
 export_screenshot :: proc(path: cstring = "screenshot.png") {
 	rl.TakeScreenshot(path)
