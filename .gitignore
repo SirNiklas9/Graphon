@@ -1,4 +1,23 @@
+# Binaries
 *.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build artifacts
+*.o
 *.obj
 *.pdb
 *.lib
+
+# Screenshots (generated at runtime)
+screenshot*.png
+
+# Editor/IDE
+.idea/
+.vscode/
+imgui.ini
+
+# env
+.env
