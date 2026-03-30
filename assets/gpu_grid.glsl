@@ -215,27 +215,151 @@ void main() {
         return;
     }
 
-    // Sample cell data
-    vec2 cellUV = (cellCoord + 0.5) / gridSize;
-    vec4 fgData = texture(texture0, cellUV);
-    vec4 bgData = texture(cellBG, cellUV);
-
-    vec3 fg = fgData.rgb;
-    vec3 bg = bgData.rgb;
-
     // Position within cell
     vec2 localPos = fract(pixelPos / cellSize);
 
-    // Get character index
+    // Sample cell data — area average for compute mode, center sample for hybrid
+    vec3 fg;
+    vec3 bg;
+    vec4 fgData;
+    vec4 bgData;
     int idx;
+
     if (computeMode == 1) {
-        // Compute mode: derive character from fg brightness
-        float brightness = dot(fg, vec3(0.299, 0.587, 0.114));
-        idx = charFromBrightness(brightness, localPos, cellCoord);
-        // bg is a darker shade of fg — preserves color while showing character detail
-        bg = fg * 0.3;
+        // 3D scene mode: procedural Grafel rendering with full character set
+        vec2 cellStart = cellCoord / gridSize;
+        vec2 cellEnd = (cellCoord + 1.0) / gridSize;
+        vec2 cellMid = (cellStart + cellEnd) * 0.5;
+
+        // Sample 4 quadrants of the cell for edge detection
+        vec2 qSize = (cellEnd - cellStart) * 0.25;
+        vec3 qTL = texture(texture0, cellStart + qSize).rgb;
+        vec3 qTR = texture(texture0, vec2(cellEnd.x - qSize.x, cellStart.y + qSize.y)).rgb;
+        vec3 qBL = texture(texture0, vec2(cellStart.x + qSize.x, cellEnd.y - qSize.y)).rgb;
+        vec3 qBR = texture(texture0, cellEnd - qSize).rgb;
+
+        // Average and quadrant brightnesses
+        fg = (qTL + qTR + qBL + qBR) * 0.25;
+        float bTL = dot(qTL, vec3(0.299, 0.587, 0.114));
+        float bTR = dot(qTR, vec3(0.299, 0.587, 0.114));
+        float bBL = dot(qBL, vec3(0.299, 0.587, 0.114));
+        float bBR = dot(qBR, vec3(0.299, 0.587, 0.114));
+        float brightness = (bTL + bTR + bBL + bBR) * 0.25;
+
+        float bTop = (bTL + bTR) * 0.5;
+        float bBot = (bBL + bBR) * 0.5;
+        float bLeft = (bTL + bBL) * 0.5;
+        float bRight = (bTR + bBR) * 0.5;
+
+        vec3 cTop = (qTL + qTR) * 0.5;
+        vec3 cBot = (qBL + qBR) * 0.5;
+        vec3 cLeft = (qTL + qBL) * 0.5;
+        vec3 cRight = (qTR + qBR) * 0.5;
+
+        float vEdge = abs(bTop - bBot);
+        float hEdge = abs(bLeft - bRight);
+
+        // Diagonal detection
+        float dFwd = abs((bTL + bBR) * 0.5 - (bTR + bBL) * 0.5); // ▚ direction
+        float dBck = abs((bTR + bBL) * 0.5 - (bTL + bBR) * 0.5); // ▞ direction
+
+        vec2 sp = floor(pixelPos);
+        float edgeThreshold = 0.25; // Hard edges only — object silhouettes, sharp shadow boundaries
+
+        // --- Edge characters (fidelity >= HALF) ---
+        if (fidelityLevel >= 2 && max(vEdge, hEdge) > edgeThreshold) {
+            if (vEdge > hEdge) {
+                // Horizontal edge — ▀ or ▄
+                vec3 brightSide = bTop > bBot ? cTop : cBot;
+                vec3 darkSide = bTop > bBot ? cBot : cTop;
+                bool topBright = bTop > bBot;
+                // Procedural: top half or bottom half of cell
+                float inTop = localPos.y < 0.5 ? 1.0 : 0.0;
+                float pattern = topBright ? inTop : (1.0 - inTop);
+                finalColor = vec4(mix(darkSide, brightSide, pattern), 1.0);
+                return;
+            } else {
+                // Vertical edge — ▌ or ▐
+                vec3 brightSide = bLeft > bRight ? cLeft : cRight;
+                vec3 darkSide = bLeft > bRight ? cRight : cLeft;
+                bool leftBright = bLeft > bRight;
+                float inLeft = localPos.x < 0.5 ? 1.0 : 0.0;
+                float pattern = leftBright ? inLeft : (1.0 - inLeft);
+                finalColor = vec4(mix(darkSide, brightSide, pattern), 1.0);
+                return;
+            }
+        }
+
+        // --- Quarter blocks (fidelity >= ALL) ---
+        if (fidelityLevel >= 4) {
+            float qSpread = max(max(bTL, bTR), max(bBL, bBR)) - min(min(bTL, bTR), min(bBL, bBR));
+            if (qSpread > edgeThreshold) {
+                float avg = brightness;
+                bool qTLon = bTL > avg + 0.02;
+                bool qTRon = bTR > avg + 0.02;
+                bool qBLon = bBL > avg + 0.02;
+                bool qBRon = bBR > avg + 0.02;
+                int qCount = (qTLon ? 1 : 0) + (qTRon ? 1 : 0) + (qBLon ? 1 : 0) + (qBRon ? 1 : 0);
+
+                if (qCount >= 1 && qCount <= 3) {
+                    // Determine bright/dark colors from quadrants
+                    vec3 brightC = vec3(0.0);
+                    vec3 darkC = vec3(0.0);
+                    float bCount = 0.0, dCount = 0.0;
+                    if (qTLon) { brightC += qTL; bCount += 1.0; } else { darkC += qTL; dCount += 1.0; }
+                    if (qTRon) { brightC += qTR; bCount += 1.0; } else { darkC += qTR; dCount += 1.0; }
+                    if (qBLon) { brightC += qBL; bCount += 1.0; } else { darkC += qBL; dCount += 1.0; }
+                    if (qBRon) { brightC += qBR; bCount += 1.0; } else { darkC += qBR; dCount += 1.0; }
+                    if (bCount > 0.0) brightC /= bCount;
+                    if (dCount > 0.0) darkC /= dCount;
+
+                    // Which quadrant is this pixel in?
+                    bool inTL = localPos.x < 0.5 && localPos.y < 0.5;
+                    bool inTR = localPos.x >= 0.5 && localPos.y < 0.5;
+                    bool inBL = localPos.x < 0.5 && localPos.y >= 0.5;
+                    bool inBR = localPos.x >= 0.5 && localPos.y >= 0.5;
+
+                    bool pixelOn = (inTL && qTLon) || (inTR && qTRon) || (inBL && qBLon) || (inBR && qBRon);
+                    finalColor = vec4(pixelOn ? brightC : darkC, 1.0);
+                    return;
+                }
+            }
+        }
+
+        // --- Density characters (fidelity >= DENSITY) ---
+        bg = fg * 0.7;
+
+        int densityLevel;
+        if (brightness > 0.7) densityLevel = 0;       // █ brightest
+        else if (brightness > 0.45) densityLevel = 1;  // ▓
+        else if (brightness > 0.20) densityLevel = 2;  // ▒
+        else if (brightness > 0.05) densityLevel = 3;  // ░
+        else densityLevel = 0;                          // Solid dark
+
+        if (fidelityLevel == 0) densityLevel = 0;
+
+        float pattern;
+        if (densityLevel == 0) {
+            pattern = 1.0;
+        } else if (densityLevel == 1) {
+            vec2 p = mod(sp, 2.0);
+            pattern = (p.x < 1.0 && p.y < 1.0) ? 0.0 : 1.0;
+        } else if (densityLevel == 2) {
+            pattern = mod(sp.x + sp.y, 2.0) < 1.0 ? 1.0 : 0.0;
+        } else {
+            vec2 p = mod(sp, 2.0);
+            pattern = (p.x >= 1.0 && p.y >= 1.0) ? 1.0 : 0.0;
+        }
+
+        finalColor = vec4(mix(bg, fg, pattern), 1.0);
+        return;
     } else {
         // Hybrid mode: read char index from texture alpha
+        vec2 cellUV = (cellCoord + 0.5) / gridSize;
+        fgData = texture(texture0, cellUV);
+        bgData = texture(cellBG, cellUV);
+        fg = fgData.rgb;
+        bg = bgData.rgb;
         idx = clamp(int(fgData.a * 255.0 + 0.5), 0, 31);
     }
 
@@ -251,32 +375,88 @@ void main() {
         return;
     }
 
-    // Hybrid mode: if fg ≈ bg (solid or near-solid cell), render as solid — prevents grid artifacts
-    float fgbgDiff = abs(fg.r - bg.r) + abs(fg.g - bg.g) + abs(fg.b - bg.b);
-    if (computeMode == 0 && fgbgDiff < 0.15) {
-        finalColor = vec4(fg, 1.0);
-        return;
+    // Procedural character rendering — no font atlas, continuous patterns
+    // idx 0-3: density (█▓▒░), 4-7: half (▀▄▌▐), 22-31: quarter blocks
+    vec2 sp = floor(pixelPos);
+    float pattern = 1.0;
+
+    if (idx == 0) {
+        // █ solid
+        pattern = 1.0;
+    } else if (idx == 1) {
+        // ▓ 75%
+        vec2 p = mod(sp, 2.0);
+        pattern = (p.x < 1.0 && p.y < 1.0) ? 0.0 : 1.0;
+    } else if (idx == 2) {
+        // ▒ 50% checkerboard
+        pattern = mod(sp.x + sp.y, 2.0) < 1.0 ? 1.0 : 0.0;
+    } else if (idx == 3) {
+        // ░ 25%
+        vec2 p = mod(sp, 2.0);
+        pattern = (p.x >= 1.0 && p.y >= 1.0) ? 1.0 : 0.0;
+    } else if (idx == 4) {
+        // ▀ top half
+        pattern = localPos.y < 0.5 ? 1.0 : 0.0;
+    } else if (idx == 5) {
+        // ▄ bottom half
+        pattern = localPos.y >= 0.5 ? 1.0 : 0.0;
+    } else if (idx == 6) {
+        // ▌ left half
+        pattern = localPos.x < 0.5 ? 1.0 : 0.0;
+    } else if (idx == 7) {
+        // ▐ right half
+        pattern = localPos.x >= 0.5 ? 1.0 : 0.0;
+    } else if (idx >= 8 && idx <= 13) {
+        // ▁▂▃▅▆▇ bottom bars (increasing height)
+        float heights[6] = float[6](0.125, 0.25, 0.375, 0.625, 0.75, 0.875);
+        float h = heights[idx - 8];
+        pattern = localPos.y >= (1.0 - h) ? 1.0 : 0.0;
+    } else if (idx >= 14 && idx <= 19) {
+        // ▉▊▋▍▎▏ left bars (decreasing width)
+        float widths[6] = float[6](0.875, 0.75, 0.625, 0.375, 0.25, 0.125);
+        float w = widths[idx - 14];
+        pattern = localPos.x < w ? 1.0 : 0.0;
+    } else if (idx == 20) {
+        // ▔ top bar (thin)
+        pattern = localPos.y < 0.125 ? 1.0 : 0.0;
+    } else if (idx == 21) {
+        // ▕ right bar (thin)
+        pattern = localPos.x >= 0.875 ? 1.0 : 0.0;
+    } else if (idx == 22) {
+        // ▖ bottom-left quarter
+        pattern = (localPos.x < 0.5 && localPos.y >= 0.5) ? 1.0 : 0.0;
+    } else if (idx == 23) {
+        // ▗ bottom-right quarter
+        pattern = (localPos.x >= 0.5 && localPos.y >= 0.5) ? 1.0 : 0.0;
+    } else if (idx == 24) {
+        // ▘ top-left quarter
+        pattern = (localPos.x < 0.5 && localPos.y < 0.5) ? 1.0 : 0.0;
+    } else if (idx == 25) {
+        // ▝ top-right quarter
+        pattern = (localPos.x >= 0.5 && localPos.y < 0.5) ? 1.0 : 0.0;
+    } else if (idx == 26) {
+        // ▙ all except top-right
+        pattern = !(localPos.x >= 0.5 && localPos.y < 0.5) ? 1.0 : 0.0;
+    } else if (idx == 27) {
+        // ▚ diagonal (TL + BR)
+        bool tl = localPos.x < 0.5 && localPos.y < 0.5;
+        bool br = localPos.x >= 0.5 && localPos.y >= 0.5;
+        pattern = (tl || br) ? 1.0 : 0.0;
+    } else if (idx == 28) {
+        // ▛ all except bottom-right
+        pattern = !(localPos.x >= 0.5 && localPos.y >= 0.5) ? 1.0 : 0.0;
+    } else if (idx == 29) {
+        // ▜ all except bottom-left
+        pattern = !(localPos.x < 0.5 && localPos.y >= 0.5) ? 1.0 : 0.0;
+    } else if (idx == 30) {
+        // ▞ diagonal (TR + BL)
+        bool tr = localPos.x >= 0.5 && localPos.y < 0.5;
+        bool bl = localPos.x < 0.5 && localPos.y >= 0.5;
+        pattern = (tr || bl) ? 1.0 : 0.0;
+    } else if (idx == 31) {
+        // ▟ all except top-left
+        pattern = !(localPos.x < 0.5 && localPos.y < 0.5) ? 1.0 : 0.0;
     }
 
-    // Glyph rectangle in font atlas
-    vec4 rect = glyphRects[idx];
-    if (rect.z < 1.0 || rect.w < 1.0) {
-        finalColor = vec4(fg, 1.0);
-        return;
-    }
-
-    // Sample glyph coverage from font atlas
-    vec2 glyphUV = (rect.xy + localPos * rect.zw) / atlasSize;
-    float coverage = texture(fontAtlas, glyphUV).a;
-
-    // Final color
-    if (computeMode == 1) {
-        // Compute mode: density chars (0-3) get near-full brightness, edge chars get modulation
-        // All chars get visible modulation — the Grafel aesthetic IS the characters
-        float intensity = 0.65 + 0.35 * coverage;
-        finalColor = vec4(fg * intensity, 1.0);
-    } else {
-        // Hybrid mode: mix bg and fg based on glyph shape
-        finalColor = vec4(mix(bg, fg, coverage), 1.0);
-    }
+    finalColor = vec4(mix(bg, fg, pattern), 1.0);
 }

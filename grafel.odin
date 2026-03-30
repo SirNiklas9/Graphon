@@ -79,7 +79,7 @@ grid_init :: proc(grid: ^Grid, screen_w, screen_h: i32, font: rl.Font, font_size
 	grid.cells = make([]Grafel, grid.cols * grid.rows)
 
 	if !grid.forced_fidelity {
-		grid.fidelity = fidelity_from_cell_size(grid.cell_w)
+		grid.fidelity = .ALL
 	}
 }
 

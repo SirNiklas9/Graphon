@@ -13,14 +13,6 @@ SCREEN_H     :: 1080
 INIT_FONT_SZ :: i32(20)
 FONT_PATH    :: "assets/JetBrainsMonoNLNerdFont-Regular.ttf"
 
-// Render path
-RenderPath :: enum {
-	CPU,     // CPU fills buffer + CPU draws each cell
-	Hybrid,  // CPU fills buffer + GPU displays (one draw call)
-	GPU,     // GPU compute fills + GPU displays (zero CPU)
-}
-
-RENDER_PATH_COUNT :: 3
 
 main :: proc() {
 	rl.InitWindow(SCREEN_W, SCREEN_H, "Graphon")
@@ -76,7 +68,7 @@ main :: proc() {
 	defer compute_destroy(&cp)
 
 	// 3D state
-	cam := camera_create({0, 5, 12}, {0, 0, 0})
+	cam := camera_create({-8, 6, 14}, {0, 1, 0})
 	db := depth_buffer_create(grid.cols, grid.rows)
 	defer depth_buffer_destroy(&db)
 	time: f32 = 0
@@ -92,6 +84,12 @@ main :: proc() {
 	scene3d := scene3d_create(grid.cols, grid.rows)
 	defer scene3d_destroy(&scene3d)
 
+	// Lights
+	scene3d_add_light(&scene3d, .Directional, {10, 15, 5}, {-1, 0, -0.5}, {0.9, 0.75, 0.5})             // golden sun, angled for long shadows
+	orbit_light_idx := scene3d_add_light(&scene3d, .Point, {8, 3, 0}, {0, 0, 0}, {1.2, 0.8, 0.3})     // warm torch, close to ground, very visible
+	scene3d_add_light(&scene3d, .Point, {-6, 4, -6}, {0, 0, 0}, {0.2, 0.3, 0.8})                      // cool blue fill
+	scene3d_add_light(&scene3d, .Point, {8, 3, 8}, {0, 0, 0}, {0.15, 0.6, 0.2})                       // green accent
+
 	// GPU pipeline (post-process)
 	gpu := gpu_create(SCREEN_W, SCREEN_H)
 	defer gpu_destroy(&gpu)
@@ -99,7 +97,6 @@ main :: proc() {
 	// GPU grid renderer (hybrid + GPU display)
 	gg := gpu_grid_create(grid.cols, grid.rows)
 	defer gpu_grid_destroy(&gg)
-	render_path := RenderPath.CPU
 
 	mouse: Mouse
 	show_cursor := true
@@ -112,28 +109,25 @@ main :: proc() {
 		// Update mouse
 		mouse_update(&mouse, &grid)
 		// Font size adjustment
-		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer, ls: ^LayerStack, gg_ptr: ^GPUGrid, cp_ptr: ^ComputePipeline, render_path: RenderPath, s3d: ^Scene3D = nil) {
+		do_resize :: proc(grid: ^Grid, font: ^rl.Font, new_size: i32, demo_mode: int, palette: ^Palette, blend: BlendMode, patterns: ^PatternLib, db: ^DepthBuffer, ls: ^LayerStack, gg_ptr: ^GPUGrid, cp_ptr: ^ComputePipeline, s3d: ^Scene3D = nil) {
 			resize_font(grid, font, new_size, demo_mode, palette, blend, patterns)
-			// Only resize heavy CPU buffers when not in GPU-only mode
-			if render_path != .GPU || grid.cols * grid.rows < 500000 {
-				depth_buffer_resize(db, grid.cols, grid.rows)
-				layer_stack_resize(ls, grid.cols, grid.rows)
-			}
+			depth_buffer_resize(db, grid.cols, grid.rows)
+			layer_stack_resize(ls, grid.cols, grid.rows)
 			gpu_grid_resize(gg_ptr, grid.cols, grid.rows)
 			compute_resize(cp_ptr, grid.cols, grid.rows)
 			if s3d != nil { scene3d_resize(s3d, grid.cols, grid.rows) }
 		}
 		if rl.IsKeyPressed(.UP) {
-			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path, &scene3d)
+			do_resize(&grid, &font, grid.font_size + 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, &scene3d)
 		}
 		if rl.IsKeyPressed(.DOWN) {
-			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path, &scene3d)
+			do_resize(&grid, &font, grid.font_size - 2, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, &scene3d)
 		}
 		if rl.IsKeyPressed(.LEFT) {
-			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path, &scene3d)
+			do_resize(&grid, &font, grid.font_size - 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, &scene3d)
 		}
 		if rl.IsKeyPressed(.RIGHT) {
-			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, render_path, &scene3d)
+			do_resize(&grid, &font, grid.font_size + 1, demo_mode, &palette, demo_blend, &patterns, &db, &ls, &gg, &cp, &scene3d)
 		}
 
 		// Cycle demo mode: 0=random, 1=solver, 2=primitives, 3=3D, 4=layers, 5=compute
@@ -155,17 +149,25 @@ main :: proc() {
 			}
 			is_compute_mode := demo_mode >= 5
 			// Compute shaders for GPU-only modes
-			if (render_path == .GPU || is_compute_mode) && cp.enabled && demo_mode != 3 {
+			if is_compute_mode && cp.enabled && demo_mode != 3 {
 				compute_run(&cp, demo_mode, time, &grid, int(demo_blend), &cam)
 			}
 			// 3D mode: Raylib native GPU renderer → identical across all display paths
 			if demo_mode == 3 {
+				// Orbit the warm torch light — low and close for visible ground pool
+				if orbit_light_idx >= 0 {
+					scene3d.lights[orbit_light_idx].position = {
+						math.cos(time * 0.5) * 6,
+						2.5,
+						math.sin(time * 0.5) * 6,
+					}
+				}
 				scene_objects := [1]Scene3DObject{
 					{model = suzanne, loaded = suzanne.meshCount > 0, position = {-5, 2, 0}, scale = 2.0, auto_rotate = true, rotate_speed = 0.5, tint = {255, 165, 50, 255}},
 				}
 				scene3d_render(&scene3d, &cam, scene_objects[:], time)
 			}
-			if render_path != .GPU && !is_compute_mode && demo_mode != 3 {
+			if !is_compute_mode && demo_mode != 3 {
 				if demo_mode == 4 {
 					fill_layers_demo(&grid, &ls, &palette, time)
 				}
@@ -208,13 +210,13 @@ main :: proc() {
 		if rl.IsKeyPressed(.F7) {
 			grid.forced_fidelity = !grid.forced_fidelity
 			if !grid.forced_fidelity {
-				grid.fidelity = fidelity_from_cell_size(grid.cell_w)
+				grid.fidelity = .ALL
 			}
 		}
 		if rl.IsKeyPressed(.F8) && grid.forced_fidelity {
 			grid.fidelity = Fidelity((int(grid.fidelity) + 1) % 5)
 		}
-		if rl.IsKeyPressed(.F6) { render_path = RenderPath((int(render_path) + 1) % RENDER_PATH_COUNT) }
+		// F6 was render path toggle — removed, single GPU path now
 		if rl.IsKeyPressed(.F9) {
 			canvas_mode = !canvas_mode
 			if canvas_mode {
@@ -258,11 +260,11 @@ main :: proc() {
 		gpu_cols, gpu_rows: int
 
 		if demo_mode == 3 && scene3d.enabled {
-			// 3D mode: Raylib rendered scene
+			// 3D mode: final output (with SSAO if enabled), Grafel grid cell dimensions
 			has_gpu_tex = true
-			gpu_tex = scene3d.target.texture
-			gpu_cols = scene3d.cols
-			gpu_rows = scene3d.rows
+			gpu_tex = scene3d_get_output(&scene3d)
+			gpu_cols = grid.cols
+			gpu_rows = grid.rows
 		} else if is_gpu_only_mode && cp.enabled && cp.target.texture.id != 0 {
 			// Compute modes
 			has_gpu_tex = true
@@ -271,43 +273,17 @@ main :: proc() {
 			gpu_rows = cp.rows
 		}
 
-		switch render_path {
-		case .CPU:
-			if has_gpu_tex {
-				gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
-			} else {
-				render_grid(&grid, font)
-			}
-		case .Hybrid:
-			if has_gpu_tex {
-				gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
-			} else {
-				gpu_grid_upload(&gg, &grid)
-				gpu_grid_render(&gg, &grid, font)
-			}
-		case .GPU:
-			if has_gpu_tex {
-				gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
-			} else {
-				gpu_grid_upload(&gg, &grid)
-				gpu_grid_render(&gg, &grid, font)
-			}
+		if has_gpu_tex {
+			gpu_grid_render(&gg, &grid, font, true, gpu_tex, gpu_cols, gpu_rows)
+		} else {
+			gpu_grid_upload(&gg, &grid)
+			gpu_grid_render(&gg, &grid, font)
 		}
 		// GPU mode always uses ALL fidelity — shader handles character selection
-		if render_path == .GPU && !grid.forced_fidelity {
-			grid.fidelity = .ALL
-		}
 
-		// Debug overlays — use compute resolution in GPU mode
-		overlay_cols: int
-		overlay_rows: int
-		if demo_mode == 3 && scene3d.enabled {
-			overlay_cols = scene3d.cols
-			overlay_rows = scene3d.rows
-		} else if has_gpu_tex {
-			overlay_cols = gpu_cols
-			overlay_rows = gpu_rows
-		}
+		// Debug overlays — always use Grafel grid dimensions
+		overlay_cols := gpu_cols > 0 ? gpu_cols : grid.cols
+		overlay_rows := gpu_rows > 0 ? gpu_rows : grid.rows
 		if cfg.show_grid_lines { debug_grid_lines(&grid, overlay_cols, overlay_rows) }
 		if cfg.show_cell_coords { debug_cell_coords(&grid, font, overlay_cols, overlay_rows) }
 
@@ -389,16 +365,6 @@ main :: proc() {
 			fmt.bprintf(fx_buf[:], "PostFX: %s\x00", fx_names[gpu.active_fx])
 			imgui.Text(cstring(raw_data(fx_buf[:])))
 
-			path_names := [RenderPath]cstring{
-				.CPU    = "CPU",
-				.Hybrid = "Hybrid (CPU+GPU)",
-				.GPU    = "GPU",
-			}
-			renderer_str := path_names[render_path]
-			ren_buf: [32]u8
-			fmt.bprintf(ren_buf[:], "Renderer: %s\x00", renderer_str)
-			imgui.Text(cstring(raw_data(ren_buf[:])))
-
 			imgui.Separator()
 			fidelity_level_names := [Fidelity]cstring{
 				.FULL_ONLY  = "FULL_ONLY",
@@ -413,7 +379,7 @@ main :: proc() {
 			imgui.Text(cstring(raw_data(ff_buf[:])))
 
 			imgui.Text("F1:Grid F2:Coords F3:Depth")
-			imgui.Text("F4:PostFX F5:Save F6:Renderer")
+			imgui.Text("F4:PostFX F5:Save")
 			imgui.Text("F7:ForceFidelity F8:CycleFidelity")
 			imgui.Text("F12:Screenshot")
 		}

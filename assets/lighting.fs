@@ -4,34 +4,170 @@ in vec3 fragPosition;
 in vec2 fragTexCoord;
 in vec3 fragNormal;
 in vec4 fragColor;
+in mat3 fragTBN;
 
 uniform sampler2D texture0;
 uniform vec4 colDiffuse;
-uniform vec3 lightDir;
-uniform vec3 lightColor;
-uniform vec3 ambientColor;
 uniform vec3 viewPos;
+uniform vec3 ambientColor;
+
+// Normal mapping
+uniform sampler2D normalMap;
+uniform int hasNormalMap;
+
+// Shadow mapping
+uniform sampler2D shadowMap;
+uniform mat4 lightVP;
+uniform int shadowEnabled;
+uniform int shadowLightIdx;
+uniform int shadowMapResolution;
+
+// Fog
+uniform vec3 fogColor;
+uniform float fogStart;
+uniform float fogEnd;
+uniform int fogEnabled;
+
+// Volumes — 3D regions with custom fog/ambient
+#define MAX_VOLUMES 4
+struct Volume {
+    vec3 minPos;
+    vec3 maxPos;
+    vec3 color;     // Fog/tint color
+    float density;  // 0 = no effect, 1 = full tint
+    int enabled;
+};
+uniform Volume volumes[MAX_VOLUMES];
+
+#define MAX_LIGHTS 4
+
+struct Light {
+    int enabled;
+    int type;       // 0 = directional, 1 = point
+    vec3 position;
+    vec3 target;
+    vec3 color;
+};
+
+uniform Light lights[MAX_LIGHTS];
 
 out vec4 finalColor;
 
+// ACES filmic tone mapping — preserves saturation better than Reinhard
+vec3 acesToneMap(vec3 x) {
+    float a = 2.51;
+    float b = 0.03;
+    float c = 2.43;
+    float d = 0.59;
+    float e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
 void main() {
     vec4 texColor = texture(texture0, fragTexCoord);
-    vec3 baseColor = texColor.rgb * colDiffuse.rgb;
 
-    // Ambient
-    vec3 ambient = ambientColor * baseColor;
+    // sRGB → linear (proper input conversion)
+    vec3 baseColor = pow(texColor.rgb * colDiffuse.rgb * fragColor.rgb, vec3(2.2));
 
-    // Diffuse
-    vec3 norm = normalize(fragNormal);
-    float diff = max(dot(norm, -normalize(lightDir)), 0.0);
-    vec3 diffuse = lightColor * diff * baseColor;
-
-    // Specular
     vec3 viewDir = normalize(viewPos - fragPosition);
-    vec3 reflectDir = reflect(normalize(lightDir), norm);
-    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 16.0);
-    vec3 specular = lightColor * spec * 0.3;
 
-    vec3 result = ambient + diffuse + specular;
-    finalColor = vec4(result, texColor.a * colDiffuse.a);
+    // Normal — use normal map if available, otherwise vertex normal
+    vec3 norm;
+    if (hasNormalMap == 1) {
+        vec3 mapNormal = texture(normalMap, fragTexCoord).rgb * 2.0 - 1.0;
+        norm = normalize(fragTBN * mapNormal);
+    } else {
+        norm = normalize(fragNormal);
+    }
+
+    // Lighting accumulation (all math in linear space)
+    vec3 lightDot = vec3(0.0);
+    vec3 specTotal = vec3(0.0);
+
+    for (int i = 0; i < MAX_LIGHTS; i++) {
+        if (lights[i].enabled == 0) continue;
+
+        vec3 lightDir;
+        float attenuation = 1.0;
+
+        if (lights[i].type == 0) {
+            lightDir = -normalize(lights[i].target - lights[i].position);
+        } else {
+            vec3 toLight = lights[i].position - fragPosition;
+            float dist = length(toLight);
+            lightDir = normalize(toLight);
+            attenuation = 1.0 / (1.0 + 0.09 * dist + 0.032 * dist * dist);
+        }
+
+        // Diffuse
+        float NdotL = max(dot(norm, lightDir), 0.0);
+        lightDot += lights[i].color * NdotL * attenuation;
+
+        // Specular — suppressed on upward-facing surfaces (ground)
+        float upFacing = abs(dot(norm, vec3(0.0, 1.0, 0.0)));
+        float specMask = 1.0 - smoothstep(0.7, 0.95, upFacing);
+        if (NdotL > 0.0 && specMask > 0.0) {
+            float specCo = pow(max(0.0, dot(viewDir, reflect(-lightDir, norm))), 16.0);
+            specTotal += lights[i].color * specCo * 0.4 * specMask * attenuation;
+        }
+    }
+
+    // Compute lit color (before shadow)
+    vec3 result = baseColor * (lightDot + specTotal);
+
+    // Shadow calculation
+    if (shadowEnabled == 1) {
+        vec4 fragPosLightSpace = lightVP * vec4(fragPosition, 1.0);
+        fragPosLightSpace.xyz /= fragPosLightSpace.w;
+        fragPosLightSpace.xyz = (fragPosLightSpace.xyz + 1.0) / 2.0;
+        vec2 sampleCoords = fragPosLightSpace.xy;
+        float curDepth = fragPosLightSpace.z;
+
+        if (sampleCoords.x >= 0.0 && sampleCoords.x <= 1.0 &&
+            sampleCoords.y >= 0.0 && sampleCoords.y <= 1.0 &&
+            curDepth <= 1.0 && curDepth >= 0.0) {
+
+            vec3 l = -normalize(lights[shadowLightIdx].target - lights[shadowLightIdx].position);
+            float bias = max(0.0002 * (1.0 - dot(norm, l)), 0.00002) + 0.00001;
+
+            int shadowCounter = 0;
+            vec2 texelSize = vec2(1.0 / float(shadowMapResolution));
+            for (int x = -2; x <= 2; x++) {
+                for (int y = -2; y <= 2; y++) {
+                    float sampleDepth = texture(shadowMap, sampleCoords + texelSize * vec2(x, y)).r;
+                    if (curDepth - bias > sampleDepth) shadowCounter++;
+                }
+            }
+
+            result = mix(result, vec3(0.0), float(shadowCounter) / 25.0);
+        }
+    }
+
+    // Add ambient (always visible, even in shadow)
+    result += baseColor * ambientColor;
+
+    // Distance fog
+    if (fogEnabled == 1) {
+        float dist = length(viewPos - fragPosition);
+        float fogFactor = clamp((dist - fogStart) / (fogEnd - fogStart), 0.0, 1.0);
+        result = mix(result, fogColor, fogFactor);
+    }
+
+    // Volume fog/tint — apply if fragment is inside a volume
+    for (int v = 0; v < MAX_VOLUMES; v++) {
+        if (volumes[v].enabled == 0) continue;
+        if (fragPosition.x >= volumes[v].minPos.x && fragPosition.x <= volumes[v].maxPos.x &&
+            fragPosition.y >= volumes[v].minPos.y && fragPosition.y <= volumes[v].maxPos.y &&
+            fragPosition.z >= volumes[v].minPos.z && fragPosition.z <= volumes[v].maxPos.z) {
+            result = mix(result, volumes[v].color, volumes[v].density);
+        }
+    }
+
+    // ACES tone mapping (linear HDR → [0,1])
+    result = acesToneMap(result);
+
+    // Linear → sRGB (proper output conversion)
+    result = pow(result, vec3(1.0 / 2.2));
+
+    finalColor = vec4(result, 1.0);
 }
