@@ -103,6 +103,14 @@ scene_create :: proc() -> Scene {
 scene_add_model :: proc(scene: ^Scene, model: rl.Model, position: rl.Vector3, mat: Material = {}, scale: f32 = 1.0) -> int {
 	if scene.object_count >= MAX_SCENE_OBJECTS do return -1
 	idx := scene.object_count
+
+	// Apply diffuse texture to model materials if provided
+	if mat.diffuse_tex.id != 0 {
+		for mi in 0 ..< model.materialCount {
+			model.materials[mi].maps[rl.MaterialMapIndex.ALBEDO].texture = mat.diffuse_tex
+		}
+	}
+
 	scene.objects[idx] = Scene3DObject{
 		model        = model,
 		loaded       = model.meshCount > 0,
