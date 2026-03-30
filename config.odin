@@ -2,47 +2,88 @@ package main
 
 import rl "vendor:raylib"
 
-// Runtime configuration
+// Runtime configuration — every tunable value in the renderer
 Config :: struct {
 	// Rendering
-	font_size:      i32,
+	font_size:       i32,
+	fidelity:        Fidelity,
 	forced_fidelity: bool,
-	fidelity:       Fidelity,
-	fog_density:    f32,
-	bg_color:       [4]u8,
-	fog_color:      [4]u8,
+
+	// Lighting
+	ambient:         [3]f32,
+
+	// Fog
+	fog_enabled:     bool,
+	fog_color:       [3]f32,
+	fog_start:       f32,
+	fog_end:         f32,
+
+	// Shadows
+	shadow_map_size: i32,
+	shadow_radius:   f32,    // Ortho coverage radius
+
+	// SSAO
+	ssao_enabled:    bool,
+	ssao_radius:     f32,
+	ssao_strength:   f32,
+
+	// Post-process
+	bloom_intensity: f32,
+	bloom_threshold: f32,
+
+	// Sky
+	sky_enabled:     bool,
+
+	// Grafel 3D
+	edge_threshold:      f32,   // Min brightness diff for edge characters
+	density_thresholds:  [4]f32, // Brightness cutoffs: solid, 75%, 50%, 25%
+	density_bg_factor:   f32,   // bg = fg * this (0-1)
 
 	// Display
-	fps_cap:        i32,
-	vsync:          bool,
-	fullscreen:     bool,
+	fps_cap:         i32,
+	vsync:           bool,
+	fullscreen:      bool,
 
-	// Debug overlays
+	// Debug
 	show_grid_lines:  bool,
 	show_cell_coords: bool,
-	show_fidelity:    bool,
-	show_depth:       bool,
-
-	// Export
-	screenshot_path: string,
 }
 
 config_default :: proc() -> Config {
 	return Config{
-		font_size      = 20,
+		font_size       = 1,
+		fidelity        = .ALL,
 		forced_fidelity = false,
-		fidelity       = .ALL,
-		fog_density    = 1.0,
-		bg_color       = {32, 32, 32, 255},
-		fog_color      = {32, 32, 32, 255},
-		fps_cap        = 60,
-		vsync          = false,
-		fullscreen     = false,
+
+		ambient         = {0.06, 0.06, 0.1},
+
+		fog_enabled     = true,
+		fog_color       = {0.05, 0.05, 0.08},
+		fog_start       = 25,
+		fog_end         = 60,
+
+		shadow_map_size = 2048,
+		shadow_radius   = 25,
+
+		ssao_enabled    = false,
+		ssao_radius     = 1.5,
+		ssao_strength   = 8.0,
+
+		bloom_intensity = 0.6,
+		bloom_threshold = 0.35,
+
+		sky_enabled     = true,
+
+		edge_threshold     = 0.25,
+		density_thresholds = {0.7, 0.45, 0.20, 0.05},
+		density_bg_factor  = 0.7,
+
+		fps_cap         = 0,
+		vsync           = false,
+		fullscreen      = false,
+
 		show_grid_lines  = false,
 		show_cell_coords = false,
-		show_fidelity    = false,
-		show_depth       = false,
-		screenshot_path  = "screenshot.png",
 	}
 }
 
@@ -69,7 +110,7 @@ debug_grid_lines :: proc(grid: ^Grid, override_cols: int = 0, override_rows: int
 	}
 }
 
-// Debug overlay: show cell coordinates at each cell
+// Debug overlay: show cell coordinates
 debug_cell_coords :: proc(grid: ^Grid, font: rl.Font, override_cols: int = 0, override_rows: int = 0) {
 	cols := override_cols > 0 ? override_cols : grid.cols
 	rows := override_rows > 0 ? override_rows : grid.rows

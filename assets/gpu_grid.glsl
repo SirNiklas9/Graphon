@@ -18,6 +18,11 @@ uniform vec2 atlasSize;
 uniform int fidelityLevel; // 0=FULL_ONLY, 1=DENSITY, 2=HALF, 3=FRACTIONAL, 4=ALL
 uniform int computeMode;   // 0=hybrid (read char from texture), 1=compute (derive char from brightness)
 
+// Configurable Grafel 3D parameters
+uniform float cfgEdgeThreshold;      // Min brightness diff for edge characters
+uniform vec4 cfgDensityThresholds;   // x=solid, y=75%, z=50%, w=25%
+uniform float cfgDensityBgFactor;    // bg = fg * this
+
 // Character index map:
 // 0-3:   Density  — █ ▓ ▒ ░
 // 4-7:   Half     — ▀ ▄ ▌ ▐
@@ -264,7 +269,7 @@ void main() {
         float dBck = abs((bTR + bBL) * 0.5 - (bTL + bBR) * 0.5); // ▞ direction
 
         vec2 sp = floor(pixelPos);
-        float edgeThreshold = 0.25; // Hard edges only — object silhouettes, sharp shadow boundaries
+        float edgeThreshold = cfgEdgeThreshold;
 
         // --- Edge characters (fidelity >= HALF) ---
         if (fidelityLevel >= 2 && max(vEdge, hEdge) > edgeThreshold) {
@@ -327,14 +332,14 @@ void main() {
         }
 
         // --- Density characters (fidelity >= DENSITY) ---
-        bg = fg * 0.7;
+        bg = fg * cfgDensityBgFactor;
 
         int densityLevel;
-        if (brightness > 0.7) densityLevel = 0;       // █ brightest
-        else if (brightness > 0.45) densityLevel = 1;  // ▓
-        else if (brightness > 0.20) densityLevel = 2;  // ▒
-        else if (brightness > 0.05) densityLevel = 3;  // ░
-        else densityLevel = 0;                          // Solid dark
+        if (brightness > cfgDensityThresholds.x) densityLevel = 0;
+        else if (brightness > cfgDensityThresholds.y) densityLevel = 1;
+        else if (brightness > cfgDensityThresholds.z) densityLevel = 2;
+        else if (brightness > cfgDensityThresholds.w) densityLevel = 3;
+        else densityLevel = 0;
 
         if (fidelityLevel == 0) densityLevel = 0;
 

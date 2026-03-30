@@ -326,6 +326,7 @@ scene3d_render :: proc(
 	models: []Scene3DObject,
 	time: f32,
 	draw_fn: proc(^Scene3D, bool) = nil,
+	cfg: ^Config = nil,
 ) {
 	if !s.enabled do return
 
@@ -349,8 +350,8 @@ scene3d_render :: proc(
 	rl.BeginTextureMode(s.target)
 	rl.ClearBackground({5, 5, 12, 255})
 
-	// Update global uniforms
-	ambient := [3]f32{0.06, 0.06, 0.1}
+	// Update global uniforms — use config if provided, otherwise defaults
+	ambient := cfg != nil ? cfg.ambient : [3]f32{0.06, 0.06, 0.1}
 	view_pos := [3]f32{cam.rl_cam.position.x, cam.rl_cam.position.y, cam.rl_cam.position.z}
 	rl.SetShaderValue(s.shader, s.ambient_loc, &ambient, .VEC3)
 	rl.SetShaderValue(s.shader, s.view_pos_loc, &view_pos, .VEC3)
@@ -374,10 +375,10 @@ scene3d_render :: proc(
 	}
 
 	// Fog
-	fog_color := [3]f32{0.05, 0.05, 0.08}
-	fog_start: f32 = 25.0
-	fog_end: f32 = 60.0
-	fog_enabled: i32 = 1
+	fog_color := cfg != nil ? cfg.fog_color : [3]f32{0.05, 0.05, 0.08}
+	fog_start := cfg != nil ? cfg.fog_start : f32(25)
+	fog_end := cfg != nil ? cfg.fog_end : f32(60)
+	fog_enabled: i32 = cfg != nil && cfg.fog_enabled ? 1 : (cfg == nil ? 1 : 0)
 	rl.SetShaderValue(s.shader, s.fog_color_loc, &fog_color, .VEC3)
 	rl.SetShaderValue(s.shader, s.fog_start_loc, &fog_start, .FLOAT)
 	rl.SetShaderValue(s.shader, s.fog_end_loc, &fog_end, .FLOAT)

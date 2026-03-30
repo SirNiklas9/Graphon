@@ -136,7 +136,7 @@ main :: proc() {
 				}
 
 				// Render 3D
-				scene3d_render(&g.scene3d, &scene.camera, scene.objects[:scene.object_count], time, demo_draw)
+				scene3d_render(&g.scene3d, &scene.camera, scene.objects[:scene.object_count], time, demo_draw, &g.config)
 			}
 
 			is_compute_mode := demo_mode >= 5
@@ -218,10 +218,10 @@ main :: proc() {
 		}
 
 		if has_gpu_tex {
-			gpu_grid_render(&g.gpu_grid, &g.grid, g.font, true, gpu_tex, gpu_cols, gpu_rows)
+			gpu_grid_render(&g.gpu_grid, &g.grid, g.font, true, gpu_tex, gpu_cols, gpu_rows, &g.config)
 		} else {
 			gpu_grid_upload(&g.gpu_grid, &g.grid)
-			gpu_grid_render(&g.gpu_grid, &g.grid, g.font)
+			gpu_grid_render(&g.gpu_grid, &g.grid, g.font, cfg = &g.config)
 		}
 
 		// Debug overlays

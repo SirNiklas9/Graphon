@@ -22,9 +22,12 @@ GPUGrid :: struct {
 	grid_size_loc:    i32,
 	cell_size_loc:    i32,
 	atlas_size_loc:   i32,
-	fidelity_loc:     i32,
-	compute_mode_loc: i32,
-	glyph_rect_locs: [32]i32,
+	fidelity_loc:           i32,
+	compute_mode_loc:       i32,
+	glyph_rect_locs:        [32]i32,
+	cfg_edge_threshold_loc: i32,
+	cfg_density_thresh_loc: i32,
+	cfg_density_bg_loc:     i32,
 
 	// Cached state — only re-upload when changed
 	cached_cols:      int,
@@ -55,6 +58,9 @@ gpu_grid_create :: proc(cols, rows: int) -> GPUGrid {
 	gg.atlas_size_loc = rl.GetShaderLocation(gg.shader, "atlasSize")
 	gg.fidelity_loc = rl.GetShaderLocation(gg.shader, "fidelityLevel")
 	gg.compute_mode_loc = rl.GetShaderLocation(gg.shader, "computeMode")
+	gg.cfg_edge_threshold_loc = rl.GetShaderLocation(gg.shader, "cfgEdgeThreshold")
+	gg.cfg_density_thresh_loc = rl.GetShaderLocation(gg.shader, "cfgDensityThresholds")
+	gg.cfg_density_bg_loc = rl.GetShaderLocation(gg.shader, "cfgDensityBgFactor")
 
 	for i in 0 ..< 32 {
 		gg.glyph_rect_locs[i] = rl.GetShaderLocation(gg.shader, rl.TextFormat("glyphRects[%d]", i32(i)))
@@ -151,7 +157,7 @@ gpu_grid_upload :: proc(gg: ^GPUGrid, grid: ^Grid) {
 }
 
 // Render entire grid in one draw call with glyph rendering
-gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bool = false, override_tex: rl.Texture2D = {}, compute_cols: int = 0, compute_rows: int = 0) {
+gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bool = false, override_tex: rl.Texture2D = {}, compute_cols: int = 0, compute_rows: int = 0, cfg: ^Config = nil) {
 	if !gg.enabled do return
 
 	// Only re-upload static uniforms when grid/font changes
@@ -201,6 +207,14 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bo
 
 	cm := i32(is_compute ? 1 : 0)
 	rl.SetShaderValue(gg.shader, gg.compute_mode_loc, &cm, .INT)
+
+	// Grafel config
+	edge_t := cfg != nil ? cfg.edge_threshold : f32(0.25)
+	density_t := cfg != nil ? cfg.density_thresholds : [4]f32{0.7, 0.45, 0.20, 0.05}
+	bg_f := cfg != nil ? cfg.density_bg_factor : f32(0.7)
+	rl.SetShaderValue(gg.shader, gg.cfg_edge_threshold_loc, &edge_t, .FLOAT)
+	rl.SetShaderValue(gg.shader, gg.cfg_density_thresh_loc, &density_t, .VEC4)
+	rl.SetShaderValue(gg.shader, gg.cfg_density_bg_loc, &bg_f, .FLOAT)
 
 	// Bind bg to unit 1, font atlas to unit 2
 	bg_unit: i32 = 1
