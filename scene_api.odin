@@ -32,19 +32,6 @@ material_create :: proc(color: rl.Color, specular: f32 = 0.3, roughness: f32 = 0
 	}
 }
 
-// Scene object — a model instance in the world
-SceneObject :: struct {
-	model:        rl.Model,
-	loaded:       bool,
-	position:     rl.Vector3,
-	scale:        f32,
-	rotation_y:   f32,
-	auto_rotate:  bool,
-	rotate_speed: f32,
-	material:     Material,
-	casts_shadow: bool,
-}
-
 // Scene light
 SceneLight :: struct {
 	enabled:  bool,
@@ -118,6 +105,8 @@ scene_add_model :: proc(scene: ^Scene, model: rl.Model, position: rl.Vector3, ma
 		scale        = scale,
 		tint         = mat.diffuse_color != {} ? mat.diffuse_color : rl.WHITE,
 		normal_map   = mat.normal_map,
+		specular     = mat.specular,
+		roughness    = mat.roughness,
 	}
 	scene.object_count += 1
 	return idx
@@ -184,5 +173,13 @@ scene3d_apply_scene :: proc(s3d: ^Scene3D, scene: ^Scene) {
 	for i in 0 ..< scene.light_count {
 		l := &scene.lights[i]
 		scene3d_add_light(s3d, l.type, l.position, l.target, l.color)
+	}
+
+	// Sync volumes
+	s3d.volume_count = 0
+	for i in 0 ..< scene.volume_count {
+		if s3d.volume_count >= 4 do break
+		s3d.volumes[s3d.volume_count] = scene.volumes[i]
+		s3d.volume_count += 1
 	}
 }

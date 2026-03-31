@@ -22,11 +22,6 @@ Config :: struct {
 	shadow_map_size: i32,
 	shadow_radius:   f32,    // Ortho coverage radius
 
-	// SSAO
-	ssao_enabled:    bool,
-	ssao_radius:     f32,
-	ssao_strength:   f32,
-
 	// Post-process
 	bloom_intensity: f32,
 	bloom_threshold: f32,
@@ -34,7 +29,7 @@ Config :: struct {
 	// Sky
 	sky_enabled:     bool,
 
-	// Grafel 3D
+	// Graphon 3D
 	edge_threshold:      f32,   // Min brightness diff for edge characters
 	density_thresholds:  [4]f32, // Brightness cutoffs: solid, 75%, 50%, 25%
 	density_bg_factor:   f32,   // bg = fg * this (0-1)
@@ -62,12 +57,8 @@ config_default :: proc() -> Config {
 		fog_start       = 25,
 		fog_end         = 60,
 
-		shadow_map_size = 2048,
-		shadow_radius   = 25,
-
-		ssao_enabled    = false,
-		ssao_radius     = 1.5,
-		ssao_strength   = 8.0,
+		shadow_map_size = 4096,
+		shadow_radius   = 15,
 
 		bloom_intensity = 0.6,
 		bloom_threshold = 0.35,

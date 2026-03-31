@@ -2,39 +2,39 @@ package main
 
 import rl "vendor:raylib"
 
-// Post-process effect types
-PostFX :: enum {
-	None,
+// Post-process effects — can be combined
+PostFX :: bit_set[PostFXFlag]
+
+PostFXFlag :: enum {
 	Bloom,
 	Scanlines,
 	Chromatic,
 }
 
-POST_FX_COUNT :: 4
-
-// GPU rendering pipeline: render to texture, apply post-process shaders
+// GPU rendering pipeline: render to texture, apply post-process shader
 GPUPipeline :: struct {
-	target:           rl.RenderTexture2D,
-	bloom_shader:     rl.Shader,
-	scanline_shader:  rl.Shader,
-	chromatic_shader: rl.Shader,
-	active_fx:        PostFX,
+	target:  rl.RenderTexture2D,
+	shader:  rl.Shader,
 
-	// Shader uniform locations
-	bloom_resolution_loc:  i32,
-	bloom_intensity_loc:   i32,
-	bloom_threshold_loc:   i32,
-	scan_resolution_loc:   i32,
-	scan_intensity_loc:    i32,
-	scan_time_loc:         i32,
-	chrom_resolution_loc:  i32,
-	chrom_amount_loc:      i32,
+	// Uniform locations
+	resolution_loc:       i32,
+	time_loc:             i32,
+	enable_bloom_loc:     i32,
+	enable_scanlines_loc: i32,
+	enable_chromatic_loc: i32,
+	bloom_intensity_loc:  i32,
+	bloom_threshold_loc:  i32,
+	scanline_intensity_loc: i32,
+	aberration_amount_loc:  i32,
 
 	// Parameters
 	bloom_intensity:    f32,
 	bloom_threshold:    f32,
 	scanline_intensity: f32,
 	aberration_amount:  f32,
+
+	// Active effects
+	active_fx: PostFX,
 }
 
 gpu_create :: proc(screen_w, screen_h: i32) -> GPUPipeline {
@@ -43,42 +43,31 @@ gpu_create :: proc(screen_w, screen_h: i32) -> GPUPipeline {
 		bloom_threshold    = 0.35,
 		scanline_intensity = 0.3,
 		aberration_amount  = 2.0,
-		active_fx          = .Bloom, // Bloom on by default
+		active_fx          = {.Bloom},
 	}
 
 	gpu.target = rl.LoadRenderTexture(screen_w, screen_h)
+	gpu.shader = rl.LoadShader(nil, "assets/postfx.glsl")
 
-	// Load shaders (nil vertex = default vertex shader)
-	gpu.bloom_shader = rl.LoadShader(nil, "assets/bloom.glsl")
-	gpu.scanline_shader = rl.LoadShader(nil, "assets/scanlines.glsl")
-	gpu.chromatic_shader = rl.LoadShader(nil, "assets/chromatic.glsl")
+	gpu.resolution_loc = rl.GetShaderLocation(gpu.shader, "resolution")
+	gpu.time_loc = rl.GetShaderLocation(gpu.shader, "time")
+	gpu.enable_bloom_loc = rl.GetShaderLocation(gpu.shader, "enableBloom")
+	gpu.enable_scanlines_loc = rl.GetShaderLocation(gpu.shader, "enableScanlines")
+	gpu.enable_chromatic_loc = rl.GetShaderLocation(gpu.shader, "enableChromatic")
+	gpu.bloom_intensity_loc = rl.GetShaderLocation(gpu.shader, "bloomIntensity")
+	gpu.bloom_threshold_loc = rl.GetShaderLocation(gpu.shader, "bloomThreshold")
+	gpu.scanline_intensity_loc = rl.GetShaderLocation(gpu.shader, "scanlineIntensity")
+	gpu.aberration_amount_loc = rl.GetShaderLocation(gpu.shader, "aberrationAmount")
 
-	// Get uniform locations
-	gpu.bloom_resolution_loc = rl.GetShaderLocation(gpu.bloom_shader, "resolution")
-	gpu.bloom_intensity_loc = rl.GetShaderLocation(gpu.bloom_shader, "bloomIntensity")
-	gpu.bloom_threshold_loc = rl.GetShaderLocation(gpu.bloom_shader, "bloomThreshold")
-
-	gpu.scan_resolution_loc = rl.GetShaderLocation(gpu.scanline_shader, "resolution")
-	gpu.scan_intensity_loc = rl.GetShaderLocation(gpu.scanline_shader, "scanlineIntensity")
-	gpu.scan_time_loc = rl.GetShaderLocation(gpu.scanline_shader, "time")
-
-	gpu.chrom_resolution_loc = rl.GetShaderLocation(gpu.chromatic_shader, "resolution")
-	gpu.chrom_amount_loc = rl.GetShaderLocation(gpu.chromatic_shader, "aberrationAmount")
-
-	// Set resolution
 	res := [2]f32{f32(screen_w), f32(screen_h)}
-	rl.SetShaderValue(gpu.bloom_shader, gpu.bloom_resolution_loc, &res, .VEC2)
-	rl.SetShaderValue(gpu.scanline_shader, gpu.scan_resolution_loc, &res, .VEC2)
-	rl.SetShaderValue(gpu.chromatic_shader, gpu.chrom_resolution_loc, &res, .VEC2)
+	rl.SetShaderValue(gpu.shader, gpu.resolution_loc, &res, .VEC2)
 
 	return gpu
 }
 
 gpu_destroy :: proc(gpu: ^GPUPipeline) {
 	rl.UnloadRenderTexture(gpu.target)
-	rl.UnloadShader(gpu.bloom_shader)
-	rl.UnloadShader(gpu.scanline_shader)
-	rl.UnloadShader(gpu.chromatic_shader)
+	rl.UnloadShader(gpu.shader)
 }
 
 // Begin rendering to the offscreen texture
@@ -92,42 +81,42 @@ gpu_end :: proc(gpu: ^GPUPipeline) {
 	rl.EndTextureMode()
 }
 
-// Draw the offscreen texture to screen with active post-process effect
+// Draw the offscreen texture to screen with active post-process effects
 gpu_present :: proc(gpu: ^GPUPipeline, time_val: f32) {
 	time := time_val
-	// Update shader uniforms
-	switch gpu.active_fx {
-	case .Bloom:
-		rl.SetShaderValue(gpu.bloom_shader, gpu.bloom_intensity_loc, &gpu.bloom_intensity, .FLOAT)
-		rl.SetShaderValue(gpu.bloom_shader, gpu.bloom_threshold_loc, &gpu.bloom_threshold, .FLOAT)
-	case .Scanlines:
-		rl.SetShaderValue(gpu.scanline_shader, gpu.scan_intensity_loc, &gpu.scanline_intensity, .FLOAT)
-		rl.SetShaderValue(gpu.scanline_shader, gpu.scan_time_loc, &time, .FLOAT)
-	case .Chromatic:
-		rl.SetShaderValue(gpu.chromatic_shader, gpu.chrom_amount_loc, &gpu.aberration_amount, .FLOAT)
-	case .None:
-	}
 
-	// Get active shader
-	shader: rl.Shader
-	use_shader := true
-	switch gpu.active_fx {
-	case .Bloom:     shader = gpu.bloom_shader
-	case .Scanlines: shader = gpu.scanline_shader
-	case .Chromatic: shader = gpu.chromatic_shader
-	case .None:      use_shader = false
-	}
+	// Upload all uniforms
+	bloom_on: i32 = .Bloom in gpu.active_fx ? 1 : 0
+	scan_on: i32 = .Scanlines in gpu.active_fx ? 1 : 0
+	chrom_on: i32 = .Chromatic in gpu.active_fx ? 1 : 0
 
-	// Draw render texture flipped (RenderTexture is upside down in OpenGL)
+	rl.SetShaderValue(gpu.shader, gpu.enable_bloom_loc, &bloom_on, .INT)
+	rl.SetShaderValue(gpu.shader, gpu.enable_scanlines_loc, &scan_on, .INT)
+	rl.SetShaderValue(gpu.shader, gpu.enable_chromatic_loc, &chrom_on, .INT)
+	rl.SetShaderValue(gpu.shader, gpu.time_loc, &time, .FLOAT)
+	rl.SetShaderValue(gpu.shader, gpu.bloom_intensity_loc, &gpu.bloom_intensity, .FLOAT)
+	rl.SetShaderValue(gpu.shader, gpu.bloom_threshold_loc, &gpu.bloom_threshold, .FLOAT)
+	rl.SetShaderValue(gpu.shader, gpu.scanline_intensity_loc, &gpu.scanline_intensity, .FLOAT)
+	rl.SetShaderValue(gpu.shader, gpu.aberration_amount_loc, &gpu.aberration_amount, .FLOAT)
+
 	src := rl.Rectangle{0, 0, f32(gpu.target.texture.width), -f32(gpu.target.texture.height)}
 	dst := rl.Rectangle{0, 0, f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
 
-	if use_shader { rl.BeginShaderMode(shader) }
+	rl.BeginShaderMode(gpu.shader)
 	rl.DrawTexturePro(gpu.target.texture, src, dst, {0, 0}, 0, rl.WHITE)
-	if use_shader { rl.EndShaderMode() }
+	rl.EndShaderMode()
 }
 
-// Cycle to next post-process effect
-gpu_cycle_fx :: proc(gpu: ^GPUPipeline) {
-	gpu.active_fx = PostFX((int(gpu.active_fx) + 1) % POST_FX_COUNT)
+// Toggle a specific effect on/off
+gpu_toggle_fx :: proc(gpu: ^GPUPipeline, fx: PostFXFlag) {
+	if fx in gpu.active_fx {
+		gpu.active_fx -= {fx}
+	} else {
+		gpu.active_fx += {fx}
+	}
+}
+
+// Check if any effect is active
+gpu_has_fx :: proc(gpu: ^GPUPipeline) -> bool {
+	return gpu.active_fx != {}
 }

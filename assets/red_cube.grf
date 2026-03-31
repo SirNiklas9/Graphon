@@ -1,0 +1,20 @@
+# Red cube — 3x3x3
+type: voxel
+palette:
+  R: 220,50,40
+  .: air
+
+layer 0:
+RRR
+RRR
+RRR
+
+layer 1:
+RRR
+RRR
+RRR
+
+layer 2:
+RRR
+RRR
+RRR

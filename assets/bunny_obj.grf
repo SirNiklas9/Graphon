@@ -1,0 +1,5 @@
+type: object
+model: bunny.obj
+color: 200,200,210
+specular: 0.5
+roughness: 0.3

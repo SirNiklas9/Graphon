@@ -5,7 +5,7 @@ import rlgl "vendor:raylib/rlgl"
 import "core:math"
 import "core:math/linalg"
 
-SHADOW_MAP_SIZE :: 2048
+SHADOW_MAP_SIZE :: 4096
 
 ShadowMap :: struct {
 	id:        u32,          // framebuffer ID

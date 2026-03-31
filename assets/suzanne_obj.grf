@@ -1,0 +1,6 @@
+type: object
+model: suzanne.obj
+color: 255,165,50
+specular: 0.3
+roughness: 0.5
+normal: test_normal.png

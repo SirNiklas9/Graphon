@@ -53,8 +53,8 @@ camera_update :: proc(cam: ^Camera, dt: f32) {
 	if rl.IsKeyDown(.S) { cam.rl_cam.position -= forward * speed }
 	if rl.IsKeyDown(.A) { cam.rl_cam.position -= right * speed }
 	if rl.IsKeyDown(.D) { cam.rl_cam.position += right * speed }
-	if rl.IsKeyDown(.Q) { cam.rl_cam.position -= up * speed }
-	if rl.IsKeyDown(.E) { cam.rl_cam.position += up * speed }
+	if rl.IsKeyDown(.Q) || rl.IsKeyDown(.LEFT_CONTROL) { cam.rl_cam.position -= up * speed }
+	if rl.IsKeyDown(.E) || rl.IsKeyDown(.SPACE) { cam.rl_cam.position += up * speed }
 
 	cam.rl_cam.target = cam.rl_cam.position + forward
 }

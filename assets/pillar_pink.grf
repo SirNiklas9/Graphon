@@ -1,0 +1,34 @@
+type: voxel
+palette:
+  P: 200,80,180
+  .: air
+
+layer 0:
+.P.
+PPP
+.P.
+
+layer 1:
+.P.
+PPP
+.P.
+
+layer 2:
+.P.
+PPP
+.P.
+
+layer 3:
+.P.
+PPP
+.P.
+
+layer 4:
+.P.
+PPP
+.P.
+
+layer 5:
+.P.
+PPP
+.P.

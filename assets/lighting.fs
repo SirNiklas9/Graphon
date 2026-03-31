@@ -11,6 +11,10 @@ uniform vec4 colDiffuse;
 uniform vec3 viewPos;
 uniform vec3 ambientColor;
 
+// Material properties (per-object)
+uniform float materialSpecular;
+uniform float materialRoughness;
+
 // Normal mapping
 uniform sampler2D normalMap;
 uniform int hasNormalMap;
@@ -103,12 +107,13 @@ void main() {
         float NdotL = max(dot(norm, lightDir), 0.0);
         lightDot += lights[i].color * NdotL * attenuation;
 
-        // Specular — suppressed on upward-facing surfaces (ground)
+        // Specular — per-object material, suppressed on upward-facing surfaces (ground)
         float upFacing = abs(dot(norm, vec3(0.0, 1.0, 0.0)));
         float specMask = 1.0 - smoothstep(0.7, 0.95, upFacing);
-        if (NdotL > 0.0 && specMask > 0.0) {
-            float specCo = pow(max(0.0, dot(viewDir, reflect(-lightDir, norm))), 16.0);
-            specTotal += lights[i].color * specCo * 0.4 * specMask * attenuation;
+        if (NdotL > 0.0 && specMask > 0.0 && materialSpecular > 0.0) {
+            float shininess = pow(2.0, 10.0 * (1.0 - materialRoughness));
+            float specCo = pow(max(0.0, dot(viewDir, reflect(-lightDir, norm))), shininess);
+            specTotal += lights[i].color * specCo * materialSpecular * specMask * attenuation;
         }
     }
 
@@ -130,21 +135,32 @@ void main() {
             vec3 l = -normalize(lights[shadowLightIdx].target - lights[shadowLightIdx].position);
             float bias = max(0.0002 * (1.0 - dot(norm, l)), 0.00002) + 0.00001;
 
-            int shadowCounter = 0;
+            float shadow = 0.0;
             vec2 texelSize = vec2(1.0 / float(shadowMapResolution));
-            for (int x = -2; x <= 2; x++) {
-                for (int y = -2; y <= 2; y++) {
+            for (int x = -3; x <= 3; x++) {
+                for (int y = -3; y <= 3; y++) {
                     float sampleDepth = texture(shadowMap, sampleCoords + texelSize * vec2(x, y)).r;
-                    if (curDepth - bias > sampleDepth) shadowCounter++;
+                    if (curDepth - bias > sampleDepth) shadow += 1.0;
                 }
             }
+            shadow /= 49.0; // 7x7 PCF, 4096 shadow map — clean at native resolution
 
-            result = mix(result, vec3(0.0), float(shadowCounter) / 25.0);
+            result = mix(result, vec3(0.0), shadow);
         }
     }
 
-    // Add ambient (always visible, even in shadow)
-    result += baseColor * ambientColor;
+    // World-space ambient occlusion — no camera dependency, fully stable
+    // Ground proximity: surfaces near the ground get darker ambient
+    float groundAO = smoothstep(0.0, 2.0, fragPosition.y) * 0.5 + 0.5;
+
+    // Cavity: downward-facing surfaces are likely in crevices/undercuts
+    float upDot = dot(norm, vec3(0.0, 1.0, 0.0));
+    float cavityAO = smoothstep(-0.5, 0.5, upDot) * 0.4 + 0.6;
+
+    float worldAO = groundAO * cavityAO;
+
+    // Add ambient with world-space AO (always visible, even in shadow)
+    result += baseColor * ambientColor * worldAO;
 
     // Distance fog
     if (fogEnabled == 1) {
@@ -168,6 +184,10 @@ void main() {
 
     // Linear → sRGB (proper output conversion)
     result = pow(result, vec3(1.0 / 2.2));
+
+    // Dither to break 8-bit color banding — ±0.5 LSB noise, imperceptible
+    float noise = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    result += (noise - 0.5) / 255.0;
 
     finalColor = vec4(result, 1.0);
 }

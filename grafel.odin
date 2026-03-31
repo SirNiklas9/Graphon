@@ -64,8 +64,8 @@ Grid :: struct {
 grid_init :: proc(grid: ^Grid, screen_w, screen_h: i32, font: rl.Font, font_size: i32) {
 	grid.font_size = font_size
 
-	// Measure cell dimensions from the monospace font
-	measured := rl.MeasureTextEx(font, "W", f32(font_size), 0)
+	// Measure cell dimensions from a loaded block character
+	measured := rl.MeasureTextEx(font, "█", f32(font_size), 0)
 	grid.cell_w = max(measured.x, 1)
 	grid.cell_h = max(measured.y, 1)
 
@@ -79,7 +79,7 @@ grid_init :: proc(grid: ^Grid, screen_w, screen_h: i32, font: rl.Font, font_size
 	grid.cells = make([]Grafel, grid.cols * grid.rows)
 
 	if !grid.forced_fidelity {
-		grid.fidelity = .ALL
+		grid.fidelity = fidelity_from_cell_size(min(grid.cell_w, grid.cell_h))
 	}
 }
 

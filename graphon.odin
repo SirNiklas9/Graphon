@@ -50,20 +50,21 @@ graphon_resize_font :: proc(g: ^Graphon, new_size: i32) {
 	scene3d_resize(&g.scene3d, g.grid.cols, g.grid.rows)
 }
 
-// Render a 3D scene through the Grafel pipeline
+// Render a 3D scene through the Graphon pipeline
 // draw_fn: optional callback for custom primitives (ground, cubes, cylinders, etc.)
-graphon_render_scene :: proc(g: ^Graphon, scene: ^Scene, time: f32, draw_fn: proc(^Scene3D, bool) = nil) {
-	// Build Scene3DObject array from scene's models
+// Leaves BeginDrawing open for caller to draw overlays (ImGui, cursor, etc.) before EndDrawing
+graphon_render_scene :: proc(g: ^Graphon, scene: ^Scene, time: f32, draw_fn: proc(^Scene3D, bool) = nil, particles: []RenderParticle = nil) {
+	// Sync scene data (lights, volumes) to renderer
 	scene3d_apply_scene(&g.scene3d, scene)
 
 	// Render 3D scene
-	scene3d_render(&g.scene3d, &scene.camera, scene.objects[:scene.object_count], time, draw_fn)
+	scene3d_render(&g.scene3d, &scene.camera, scene.objects[:scene.object_count], time, draw_fn, &g.config, particles)
 
 	// Get output texture (with SSAO if enabled)
 	output := scene3d_get_output(&g.scene3d)
 
-	// Apply post-process
-	use_postfx := g.gpu.active_fx != .None
+	// Display through Graphon grid
+	use_postfx := gpu_has_fx(&g.gpu)
 	if use_postfx {
 		gpu_begin(&g.gpu)
 	} else {
@@ -71,8 +72,11 @@ graphon_render_scene :: proc(g: ^Graphon, scene: ^Scene, time: f32, draw_fn: pro
 		rl.ClearBackground(rl.BLACK)
 	}
 
-	// Grafel conversion
-	gpu_grid_render(&g.gpu_grid, &g.grid, g.font, true, output, g.grid.cols, g.grid.rows)
+	gpu_grid_render(&g.gpu_grid, &g.grid, g.font, true, output, g.grid.cols, g.grid.rows, &g.config)
+
+	// Debug overlays
+	if g.config.show_grid_lines { debug_grid_lines(&g.grid, g.grid.cols, g.grid.rows) }
+	if g.config.show_cell_coords { debug_cell_coords(&g.grid, g.font, g.grid.cols, g.grid.rows) }
 
 	if use_postfx {
 		gpu_end(&g.gpu)
@@ -82,7 +86,7 @@ graphon_render_scene :: proc(g: ^Graphon, scene: ^Scene, time: f32, draw_fn: pro
 	}
 }
 
-// Toggle post-process effect
-graphon_cycle_fx :: proc(g: ^Graphon) {
-	gpu_cycle_fx(&g.gpu)
+// Toggle a post-process effect
+graphon_toggle_fx :: proc(g: ^Graphon, fx: PostFXFlag) {
+	gpu_toggle_fx(&g.gpu, fx)
 }

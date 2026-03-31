@@ -1,0 +1,67 @@
+# A simple voxel house
+type: voxel
+palette:
+  W: 139,90,43
+  R: 180,40,30
+  D: 80,50,20
+  G: 60,140,50
+  .: air
+
+# Floor (layer 0)
+layer 0:
+WWWWWWWW
+WWWWWWWW
+WWWWWWWW
+WWWWWWWW
+WWWWWWWW
+WWWWWWWW
+
+# Walls (layers 1-3)
+layer 1:
+WWWWWWWW
+W......W
+W......W
+W......W
+W......W
+WWWDWWWW
+
+layer 2:
+WWWWWWWW
+W......W
+W......W
+W......W
+W......W
+WWW..WWW
+
+layer 3:
+WWWWWWWW
+W......W
+W......W
+W......W
+W......W
+WWWWWWWW
+
+# Roof (layers 4-6)
+layer 4:
+RRRRRRRR
+RRRRRRRR
+RRRRRRRR
+RRRRRRRR
+RRRRRRRR
+RRRRRRRR
+
+layer 5:
+........
+RRRRRRRR
+RRRRRRRR
+RRRRRRRR
+RRRRRRRR
+........
+
+layer 6:
+........
+........
+RRRRRRRR
+RRRRRRRR
+........
+........

@@ -12,25 +12,8 @@ SCREEN_H     :: 1080
 INIT_FONT_SZ :: i32(1)
 FONT_PATH    :: "assets/JetBrainsMonoNLNerdFont-Regular.ttf"
 
-// Demo draw callback — custom primitives
-demo_draw :: proc(s3d: ^Scene3D, use_shader: bool) {
-	// Ground — only in color pass
-	if use_shader {
-		rl.DrawPlane({0, 0, 0}, {40, 40}, {120, 115, 105, 255})
-	}
-
-	// Cube
-	rl.DrawCubeV({0, 2, 0}, {3, 3, 3}, {220, 50, 40, 255})
-
-	// Pillars
-	pillar_colors := [4]rl.Color{{50, 200, 80, 255}, {80, 100, 220, 255}, {200, 80, 180, 255}, {80, 200, 200, 255}}
-	pillar_pos := [4]rl.Vector3{{-8, 3, -5}, {8, 3, -5}, {-8, 3, 5}, {8, 3, 5}}
-	for i in 0 ..< 4 {
-		rl.DrawCylinder(pillar_pos[i], 0.6, 0.6, 6, 32, pillar_colors[i])
-	}
-}
-
 main :: proc() {
+	rl.SetConfigFlags({.VSYNC_HINT})
 	rl.InitWindow(SCREEN_W, SCREEN_H, "Graphon")
 	defer rl.CloseWindow()
 	rl.SetTargetFPS(0)
@@ -46,25 +29,32 @@ main :: proc() {
 	g := graphon_init(SCREEN_W, SCREEN_H, FONT_PATH, INIT_FONT_SZ)
 	defer graphon_destroy(&g)
 
-	// --- Scene ---
-	scene := scene_create()
-	scene.camera = camera_create({-8, 6, 14}, {0, 1, 0})
+	// --- Scene from .grf ---
+	loaded, grf_ok := grf_load_scene("assets/demo.grf")
+	if !grf_ok {
+		rl.TraceLog(.ERROR, "Failed to load demo.grf — using empty scene")
+		loaded.scene = scene_create()
+		loaded.scene.camera = camera_create({-8, 6, 14}, {0, 1, 0})
+	}
+	defer grf_loaded_scene_destroy(&loaded)
+	scene := &loaded.scene
 
-	// Lights
-	scene_add_light(&scene, .Directional, {10, 15, 5}, {-1, 0, -0.5}, {0.9, 0.75, 0.5})
-	orbit_light_idx := scene_add_light(&scene, .Point, {8, 3, 0}, {0, 0, 0}, {1.2, 0.8, 0.3})
-	scene_add_light(&scene, .Point, {-6, 4, -6}, {0, 0, 0}, {0.2, 0.3, 0.8})
-	scene_add_light(&scene, .Point, {8, 3, 8}, {0, 0, 0}, {0.15, 0.6, 0.2})
+	// Orbit light index (second light in the .grf)
+	orbit_light_idx := 1
 
-	// Volumes
-	scene_add_volume(&scene, {-20, -1, -20}, {-5, 10, 20}, {0.05, 0.08, 0.2}, 0.3)
+	// Hot reload watcher
+	watcher := grf_watcher_create(0.5)
+	defer grf_watcher_destroy(&watcher)
+	grf_watcher_add(&watcher, "assets/demo.grf")
+	grf_watcher_add(&watcher, "assets/voxel_house.grf")
 
-	// Model
-	suzanne := rl.LoadModel("assets/suzanne.obj")
-	defer rl.UnloadModel(suzanne)
-	scene_add_model(&scene, suzanne, {-5, 2, 0}, material_create({255, 165, 50, 255}), 2.0)
-	scene.objects[scene.object_count - 1].auto_rotate = true
-	scene.objects[scene.object_count - 1].rotate_speed = 0.5
+	// Data input API (UDP port 9999) — disabled for now
+	// data_in := data_input_create(9999)
+	// defer data_input_destroy(&data_in)
+
+	// 2D screen-space overlay
+	test_sprite := rl.LoadTexture("assets/test_sprite.png")
+	defer rl.UnloadTexture(test_sprite)
 
 	// Fire particles (demo simulation — NOT renderer code)
 	MAX_FIRE :: 200
@@ -85,11 +75,25 @@ main :: proc() {
 		if rl.IsKeyPressed(.LEFT)  { graphon_resize_font(&g, g.font_size - 1) }
 		if rl.IsKeyPressed(.RIGHT) { graphon_resize_font(&g, g.font_size + 1) }
 
+		// Data input (UDP) — disabled for now
+		// data_input_poll(&data_in, scene)
+
+		// Hot reload
+		if grf_watcher_update(&watcher, dt) {
+			rl.TraceLog(.INFO, "GRF file changed — reloading scene")
+			grf_loaded_scene_destroy(&loaded)
+			new_loaded, new_ok := grf_load_scene("assets/demo.grf")
+			if new_ok {
+				loaded = new_loaded
+				scene = &loaded.scene
+			}
+		}
+
 		// Camera
 		camera_update(&scene.camera, dt)
 
 		// Orbit warm light
-		if orbit_light_idx >= 0 {
+		if orbit_light_idx >= 0 && orbit_light_idx < scene.light_count {
 			scene.lights[orbit_light_idx].position = {
 				math.cos(time * 0.5) * 6,
 				2.5,
@@ -116,39 +120,15 @@ main :: proc() {
 			fire[i].size *= 0.998
 		}
 
-		// Sync lights to renderer
-		g.scene3d.light_count = 0
-		for i in 0 ..< scene.light_count {
-			l := &scene.lights[i]
-			scene3d_add_light(&g.scene3d, l.type, l.position, l.target, l.color)
-		}
-
-		// Render scene
-		scene3d_render(&g.scene3d, &scene.camera, scene.objects[:scene.object_count], time, demo_draw, &g.config, fire[:])
-
-		// Display
-		use_postfx := g.gpu.active_fx != .None
-		if use_postfx { gpu_begin(&g.gpu) }
-		else { rl.BeginDrawing(); rl.ClearBackground(rl.BLACK) }
-
-		output := scene3d_get_output(&g.scene3d)
-		gpu_grid_render(&g.gpu_grid, &g.grid, g.font, true, output, g.grid.cols, g.grid.rows, &g.config)
-
-		// Debug overlays
-		if g.config.show_grid_lines { debug_grid_lines(&g.grid, g.grid.cols, g.grid.rows) }
-		if g.config.show_cell_coords { debug_cell_coords(&g.grid, g.font, g.grid.cols, g.grid.rows) }
-
-		if use_postfx {
-			gpu_end(&g.gpu)
-			rl.BeginDrawing()
-			rl.ClearBackground(rl.BLACK)
-			gpu_present(&g.gpu, time)
-		}
+		// Render scene through Graphon pipeline
+		graphon_render_scene(&g, scene, time, nil, fire[:])
 
 		// Controls
 		if rl.IsKeyPressed(.F1) { g.config.show_grid_lines = !g.config.show_grid_lines }
 		if rl.IsKeyPressed(.F2) { g.config.show_cell_coords = !g.config.show_cell_coords }
-		if rl.IsKeyPressed(.F4) { graphon_cycle_fx(&g) }
+		if rl.IsKeyPressed(.F4) { graphon_toggle_fx(&g, .Bloom) }
+		if rl.IsKeyPressed(.F5) { graphon_toggle_fx(&g, .Scanlines) }
+		if rl.IsKeyPressed(.F6) { graphon_toggle_fx(&g, .Chromatic) }
 		if rl.IsKeyPressed(.F7) {
 			g.grid.forced_fidelity = !g.grid.forced_fidelity
 			if !g.grid.forced_fidelity { g.grid.fidelity = .ALL }
@@ -158,6 +138,9 @@ main :: proc() {
 		}
 		if rl.IsKeyPressed(.F11) { rl.ToggleBorderlessWindowed() }
 		if rl.IsKeyPressed(.F12) { export_screenshot() }
+
+		// 2D screen-space sprite (bottom-right corner)
+		rl.DrawTexture(test_sprite, rl.GetScreenWidth() - test_sprite.width - 20, rl.GetScreenHeight() - test_sprite.height - 20, rl.WHITE)
 
 		// ImGui
 		rlimgui.begin()
@@ -173,9 +156,11 @@ main :: proc() {
 			imgui.Text(cstring(raw_data(grid_buf[:])))
 
 			imgui.Separator()
-			fx_names := [PostFX]cstring{.None = "None", .Bloom = "Bloom", .Scanlines = "Scanlines", .Chromatic = "Chromatic"}
-			fx_buf: [32]u8
-			fmt.bprintf(fx_buf[:], "PostFX: %s\x00", fx_names[g.gpu.active_fx])
+			fx_buf: [64]u8
+			bloom_str := .Bloom in g.gpu.active_fx ? "ON" : "off"
+			scan_str := .Scanlines in g.gpu.active_fx ? "ON" : "off"
+			chrom_str := .Chromatic in g.gpu.active_fx ? "ON" : "off"
+			fmt.bprintf(fx_buf[:], "FX: B:%s S:%s C:%s\x00", bloom_str, scan_str, chrom_str)
 			imgui.Text(cstring(raw_data(fx_buf[:])))
 
 			fid_names := [Fidelity]cstring{.FULL_ONLY = "FULL_ONLY", .DENSITY = "DENSITY", .HALF = "HALF", .FRACTIONAL = "FRACTIONAL", .ALL = "ALL"}
@@ -185,10 +170,15 @@ main :: proc() {
 
 			imgui.Separator()
 			imgui.Text("WASD:Move  RMB:Look  QE:Up/Down")
-			imgui.Text("F4:PostFX  F7:Fidelity  F12:Screenshot")
+			imgui.Text("F4:Bloom F5:Scan F6:Chrom F7:Fidelity")
 		}
 		imgui.End()
 		rlimgui.end()
+
+		// Re-hide cursor after ImGui (it re-enables it each frame)
+		if !rl.IsCursorOnScreen() || true {
+			rl.HideCursor()
+		}
 
 		// Custom cursor — drawn last, always on top
 		mp := rl.GetMousePosition()

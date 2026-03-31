@@ -1,0 +1,3 @@
+type: object
+sprite: test_sprite.png
+billboard: true

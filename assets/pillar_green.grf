@@ -1,0 +1,35 @@
+# Green pillar — approximate cylinder, 6 units tall
+type: voxel
+palette:
+  G: 50,200,80
+  .: air
+
+layer 0:
+.G.
+GGG
+.G.
+
+layer 1:
+.G.
+GGG
+.G.
+
+layer 2:
+.G.
+GGG
+.G.
+
+layer 3:
+.G.
+GGG
+.G.
+
+layer 4:
+.G.
+GGG
+.G.
+
+layer 5:
+.G.
+GGG
+.G.

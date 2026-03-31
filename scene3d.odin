@@ -28,7 +28,7 @@ Light :: struct {
 }
 
 // GPU 3D scene renderer — uses Raylib's native 3D pipeline to render models,
-// then captures the output for the Grafel glyph shader
+// then captures the output for the Graphon glyph shader
 Scene3D :: struct {
 	target:  rl.RenderTexture2D,
 	cols:    int,
@@ -58,21 +58,17 @@ Scene3D :: struct {
 	sky_vp_loc:        i32,
 	sky_sun_dir_loc:   i32,
 
-	// Depth pass + SSAO
-	depth_shader:      rl.Shader,
-	depth_target:      rl.RenderTexture2D,
-	depth_vp_loc:      i32,
-	ssao_shader:       rl.Shader,
-	ssao_target:       rl.RenderTexture2D,
-	ssao_res_loc:      i32,
-	ssao_radius_loc:   i32,
-	ssao_strength_loc: i32,
-	ssao_depth_loc:    i32,
-	ssao_enabled:      bool,
-
 	// Lights
 	lights:     [MAX_LIGHTS]Light,
 	light_count: int,
+
+	// Volumes (synced from Scene)
+	volumes:      [4]SceneVolume,
+	volume_count: int,
+
+	// Material uniform locations
+	material_specular_loc:  i32,
+	material_roughness_loc: i32,
 }
 
 scene3d_create :: proc(cols, rows: int) -> Scene3D {
@@ -106,8 +102,9 @@ scene3d_create :: proc(cols, rows: int) -> Scene3D {
 		fog_start_loc          = rl.GetShaderLocation(shader, "fogStart"),
 		fog_end_loc            = rl.GetShaderLocation(shader, "fogEnd"),
 		fog_enabled_loc        = rl.GetShaderLocation(shader, "fogEnabled"),
+		material_specular_loc  = rl.GetShaderLocation(shader, "materialSpecular"),
+		material_roughness_loc = rl.GetShaderLocation(shader, "materialRoughness"),
 		shadow                 = shadow_create(),
-		ssao_enabled           = true,
 	}
 
 	// Cache volume uniform locations
@@ -139,50 +136,6 @@ scene3d_create :: proc(cols, rows: int) -> Scene3D {
 		s.sky_sun_dir_loc = rl.GetShaderLocation(s.sky_shader, "sunDirection")
 	}
 
-	// Depth pass — float-precision texture to avoid banding in SSAO
-	s.depth_shader = rl.LoadShader("assets/lighting.vs", "assets/depth_output.fs")
-	if s.depth_shader.id != 0 {
-		s.depth_shader.locs[rl.ShaderLocationIndex.MATRIX_MODEL] = rl.GetShaderLocation(s.depth_shader, "matModel")
-		s.depth_shader.locs[rl.ShaderLocationIndex.MATRIX_NORMAL] = rl.GetShaderLocation(s.depth_shader, "matNormal")
-		s.depth_vp_loc = rl.GetShaderLocation(s.depth_shader, "viewPos")
-
-		// Create float FBO for depth — 32-bit float per channel, no banding
-		depth_fbo := rlgl.LoadFramebuffer()
-		if depth_fbo != 0 {
-			depth_color_id := rlgl.LoadTexture(nil, i32(c), i32(r), i32(rl.PixelFormat.UNCOMPRESSED_R32G32B32A32), 1)
-			depth_depth_id := rlgl.LoadTextureDepth(i32(c), i32(r), false)
-			rlgl.FramebufferAttach(depth_fbo, depth_color_id, i32(rlgl.FramebufferAttachType.COLOR_CHANNEL0), i32(rlgl.FramebufferAttachTextureType.TEXTURE2D), 0)
-			rlgl.FramebufferAttach(depth_fbo, depth_depth_id, i32(rlgl.FramebufferAttachType.DEPTH), i32(rlgl.FramebufferAttachTextureType.TEXTURE2D), 0)
-
-			if rlgl.FramebufferComplete(depth_fbo) {
-				s.depth_target = rl.RenderTexture2D{
-					id = depth_fbo,
-					texture = rl.Texture2D{id = depth_color_id, width = i32(c), height = i32(r), mipmaps = 1, format = .UNCOMPRESSED_R32G32B32A32},
-					depth = rl.Texture2D{id = depth_depth_id, width = i32(c), height = i32(r), mipmaps = 1, format = .UNCOMPRESSED_R8G8B8A8},
-				}
-				rl.TraceLog(.INFO, "SSAO depth target created (float32, %dx%d)", i32(c), i32(r))
-			} else {
-				rl.TraceLog(.WARNING, "SSAO depth FBO incomplete — falling back to RGBA8")
-				rlgl.UnloadFramebuffer(depth_fbo)
-				rlgl.UnloadTexture(depth_color_id)
-				rlgl.UnloadTexture(depth_depth_id)
-				s.depth_target = rl.LoadRenderTexture(i32(c), i32(r))
-			}
-		} else {
-			s.depth_target = rl.LoadRenderTexture(i32(c), i32(r))
-		}
-	}
-
-	// SSAO post-process
-	s.ssao_shader = rl.LoadShader(nil, "assets/ssao.glsl")
-	if s.ssao_shader.id != 0 {
-		s.ssao_res_loc = rl.GetShaderLocation(s.ssao_shader, "resolution")
-		s.ssao_radius_loc = rl.GetShaderLocation(s.ssao_shader, "ssaoRadius")
-		s.ssao_strength_loc = rl.GetShaderLocation(s.ssao_shader, "ssaoStrength")
-		s.ssao_depth_loc = rl.GetShaderLocation(s.ssao_shader, "depthTex")
-		s.ssao_target = rl.LoadRenderTexture(i32(c), i32(r))
-	}
-
 	return s
 }
 
@@ -193,14 +146,6 @@ scene3d_destroy :: proc(s: ^Scene3D) {
 	}
 	shadow_destroy(&s.shadow)
 	if s.sky_shader.id != 0 { rl.UnloadShader(s.sky_shader) }
-	if s.depth_shader.id != 0 {
-		rl.UnloadShader(s.depth_shader)
-		rl.UnloadRenderTexture(s.depth_target)
-	}
-	if s.ssao_shader.id != 0 {
-		rl.UnloadShader(s.ssao_shader)
-		rl.UnloadRenderTexture(s.ssao_target)
-	}
 }
 
 scene3d_resize :: proc(s: ^Scene3D, cols, rows: int) {
@@ -212,14 +157,6 @@ scene3d_resize :: proc(s: ^Scene3D, cols, rows: int) {
 		if s.shader.id != 0 { rl.UnloadShader(s.shader) }
 	}
 	shadow_destroy(&s.shadow)
-	if s.depth_shader.id != 0 {
-		rl.UnloadShader(s.depth_shader)
-		rl.UnloadRenderTexture(s.depth_target)
-	}
-	if s.ssao_shader.id != 0 {
-		rl.UnloadShader(s.ssao_shader)
-		rl.UnloadRenderTexture(s.ssao_target)
-	}
 	s^ = scene3d_create(cols, rows)
 	// Restore lights with new shader locations already cached, copy data back
 	for i in 0 ..< count {
@@ -269,7 +206,15 @@ scene3d_update_lights :: proc(s: ^Scene3D) {
 // Draw all scene geometry — shared between shadow pass and color pass
 // use_shader: false for shadow pass (depth only), true for color pass
 // draw_fn: optional callback for custom primitives (ground, cubes, etc.)
-scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, use_shader: bool = true, draw_fn: proc(^Scene3D, bool) = nil) {
+scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, use_shader: bool = true, draw_fn: proc(^Scene3D, bool) = nil, cam: ^Camera = nil) {
+	// Default material for primitives drawn via callback
+	if use_shader {
+		default_spec: f32 = 0.3
+		default_rough: f32 = 0.5
+		rl.SetShaderValue(s.shader, s.material_specular_loc, &default_spec, .FLOAT)
+		rl.SetShaderValue(s.shader, s.material_roughness_loc, &default_rough, .FLOAT)
+	}
+
 	// Custom draw callback (ground, primitives, etc.)
 	if draw_fn != nil {
 		draw_fn(s, use_shader)
@@ -283,6 +228,12 @@ scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, u
 			for mi in 0 ..< obj.model.materialCount {
 				obj.model.materials[mi].shader = s.shader
 			}
+
+			// Per-object material
+			spec := obj.specular
+			rough := obj.roughness
+			rl.SetShaderValue(s.shader, s.material_specular_loc, &spec, .FLOAT)
+			rl.SetShaderValue(s.shader, s.material_roughness_loc, &rough, .FLOAT)
 
 			has_nmap := i32(obj.normal_map.id != 0 ? 1 : 0)
 			rl.SetShaderValue(s.shader, s.has_normal_map_loc, &has_nmap, .INT)
@@ -298,6 +249,37 @@ scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, u
 		rot_y := obj.rotation_y
 		if obj.auto_rotate {
 			rot_y += time * obj.rotate_speed
+		}
+
+		if obj.billboard && cam != nil {
+			// Look-at camera POSITION — plane normal (Y+) points at camera
+			dir := linalg.normalize(rl.Vector3{
+				cam.rl_cam.position.x - pos.x,
+				cam.rl_cam.position.y - pos.y,
+				cam.rl_cam.position.z - pos.z,
+			})
+
+			// Flip — plane face should point AT camera, not away
+			dir = -dir
+
+			// Build orthonormal basis: Y→dir, X→right, Z→up
+			world_up := rl.Vector3{0, 1, 0}
+			right: rl.Vector3
+			if math.abs(dir.y) > 0.999 {
+				right = {1, 0, 0}
+			} else {
+				right = linalg.normalize(linalg.cross(world_up, dir))
+			}
+			up := linalg.cross(dir, right)
+
+			// Columns: X=right, Y=dir(normal), Z=up
+			obj.model.transform = rl.Matrix{
+				right.x, dir.x, up.x, 0,
+				right.y, dir.y, up.y, 0,
+				right.z, dir.z, up.z, 0,
+				0,       0,     0,    1,
+			}
+			rot_y = 0
 		}
 
 		rl.DrawModelEx(
@@ -342,8 +324,9 @@ scene3d_render :: proc(
 	has_shadow := s.shadow.enabled && shadow_light_idx >= 0
 
 	if has_shadow {
-		shadow_begin(&s.shadow, &s.lights[shadow_light_idx], {0, 0, 0}, 25)
-		scene3d_draw_geometry(s, models, time, false, draw_fn) // depth only, no lighting shader
+		shadow_radius := cfg != nil ? cfg.shadow_radius : f32(15)
+		shadow_begin(&s.shadow, &s.lights[shadow_light_idx], {0, 0, 0}, shadow_radius)
+		scene3d_draw_geometry(s, models, time, false, draw_fn, cam) // depth only, no lighting shader
 		shadow_end(&s.shadow)
 	}
 
@@ -357,22 +340,23 @@ scene3d_render :: proc(
 	rl.SetShaderValue(s.shader, s.ambient_loc, &ambient, .VEC3)
 	rl.SetShaderValue(s.shader, s.view_pos_loc, &view_pos, .VEC3)
 
-	// Volumes — demo: blue fog zone on left side
-	vol0_min := [3]f32{-20, -1, -20}
-	vol0_max := [3]f32{-5, 10, 20}
-	vol0_color := [3]f32{0.05, 0.08, 0.2}
-	vol0_density: f32 = 0.3
-	vol0_enabled: i32 = 1
-	rl.SetShaderValue(s.shader, s.volume_locs[0][0], &vol0_min, .VEC3)
-	rl.SetShaderValue(s.shader, s.volume_locs[0][1], &vol0_max, .VEC3)
-	rl.SetShaderValue(s.shader, s.volume_locs[0][2], &vol0_color, .VEC3)
-	rl.SetShaderValue(s.shader, s.volume_locs[0][3], &vol0_density, .FLOAT)
-	rl.SetShaderValue(s.shader, s.volume_locs[0][4], &vol0_enabled, .INT)
-
-	// Disable remaining volumes
-	for i in 1 ..< 4 {
-		disabled: i32 = 0
-		rl.SetShaderValue(s.shader, s.volume_locs[i][4], &disabled, .INT)
+	// Upload volumes from scene data
+	for i in 0 ..< 4 {
+		if i < s.volume_count && s.volumes[i].enabled {
+			min_p := [3]f32{s.volumes[i].min_pos.x, s.volumes[i].min_pos.y, s.volumes[i].min_pos.z}
+			max_p := [3]f32{s.volumes[i].max_pos.x, s.volumes[i].max_pos.y, s.volumes[i].max_pos.z}
+			col := [3]f32{s.volumes[i].color.x, s.volumes[i].color.y, s.volumes[i].color.z}
+			dens := s.volumes[i].density
+			en: i32 = 1
+			rl.SetShaderValue(s.shader, s.volume_locs[i][0], &min_p, .VEC3)
+			rl.SetShaderValue(s.shader, s.volume_locs[i][1], &max_p, .VEC3)
+			rl.SetShaderValue(s.shader, s.volume_locs[i][2], &col, .VEC3)
+			rl.SetShaderValue(s.shader, s.volume_locs[i][3], &dens, .FLOAT)
+			rl.SetShaderValue(s.shader, s.volume_locs[i][4], &en, .INT)
+		} else {
+			disabled: i32 = 0
+			rl.SetShaderValue(s.shader, s.volume_locs[i][4], &disabled, .INT)
+		}
 	}
 
 	// Fog
@@ -426,7 +410,7 @@ scene3d_render :: proc(
 
 	rl.BeginShaderMode(s.shader)
 
-	scene3d_draw_geometry(s, models, time, true, draw_fn)
+	scene3d_draw_geometry(s, models, time, true, draw_fn, cam)
 
 	// Light indicator spheres (drawn after geometry, unaffected by shadow)
 	for i in 0 ..< s.light_count {
@@ -447,6 +431,10 @@ scene3d_render :: proc(
 	}
 
 	rl.EndMode3D()
+
+	// Lens flares — 2D screen-space effect drawn on top of the 3D scene
+	draw_lens_flares(s, cam)
+
 	rl.EndTextureMode()
 
 	// Unbind shadow map
@@ -454,63 +442,10 @@ scene3d_render :: proc(
 		shadow_unbind()
 	}
 
-	// --- Depth pass (for SSAO) ---
-	if s.ssao_enabled && s.depth_shader.id != 0 {
-		view_pos_depth := [3]f32{cam.rl_cam.position.x, cam.rl_cam.position.y, cam.rl_cam.position.z}
-		rl.SetShaderValue(s.depth_shader, s.depth_vp_loc, &view_pos_depth, .VEC3)
-
-		rl.BeginTextureMode(s.depth_target)
-		rl.ClearBackground(rl.WHITE) // Far = white (1.0)
-		rl.BeginMode3D(cam.rl_cam)
-		rl.BeginShaderMode(s.depth_shader)
-		scene3d_draw_geometry(s, models, time, true, draw_fn)
-		rl.EndShaderMode()
-		rl.EndMode3D()
-		rl.EndTextureMode()
-	}
-
-	// --- SSAO post-process ---
-	if s.ssao_enabled && s.ssao_shader.id != 0 && s.depth_shader.id != 0 {
-		res := [2]f32{f32(s.cols), f32(s.rows)}
-		radius: f32 = 1.5
-		strength: f32 = 8.0
-		rl.SetShaderValue(s.ssao_shader, s.ssao_res_loc, &res, .VEC2)
-		rl.SetShaderValue(s.ssao_shader, s.ssao_radius_loc, &radius, .FLOAT)
-		rl.SetShaderValue(s.ssao_shader, s.ssao_strength_loc, &strength, .FLOAT)
-
-		// Bind depth texture to slot 1
-		depth_slot: i32 = 1
-		rl.SetShaderValue(s.ssao_shader, s.ssao_depth_loc, &depth_slot, .INT)
-
-		rl.BeginTextureMode(s.ssao_target)
-		rl.ClearBackground(rl.BLACK)
-
-		rlgl.DrawRenderBatchActive()
-		rlgl.ActiveTextureSlot(depth_slot)
-		rlgl.EnableTexture(s.depth_target.texture.id)
-		rlgl.ActiveTextureSlot(0)
-
-		rl.BeginShaderMode(s.ssao_shader)
-		src := rl.Rectangle{0, 0, f32(s.target.texture.width), -f32(s.target.texture.height)}
-		dst := rl.Rectangle{0, 0, f32(s.cols), f32(s.rows)}
-		rl.DrawTexturePro(s.target.texture, src, dst, {0, 0}, 0, rl.WHITE)
-		rl.EndShaderMode()
-
-		rlgl.DrawRenderBatchActive()
-		rlgl.ActiveTextureSlot(depth_slot)
-		rlgl.DisableTexture()
-		rlgl.ActiveTextureSlot(0)
-
-		rl.EndTextureMode()
-
-	}
 }
 
-// Get the final output texture — SSAO result if enabled, raw scene otherwise
+// Get the final output texture
 scene3d_get_output :: proc(s: ^Scene3D) -> rl.Texture2D {
-	if s.ssao_enabled && s.ssao_target.texture.id != 0 {
-		return s.ssao_target.texture
-	}
 	return s.target.texture
 }
 
@@ -525,4 +460,7 @@ Scene3DObject :: struct {
 	rotate_speed: f32,
 	tint:         rl.Color,
 	normal_map:   rl.Texture2D, // optional — set .id to 0 if none
+	specular:     f32,
+	roughness:    f32,
+	billboard:    bool, // always face camera
 }

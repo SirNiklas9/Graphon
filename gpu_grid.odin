@@ -4,7 +4,7 @@ import rl "vendor:raylib"
 import rlgl "vendor:raylib/rlgl"
 
 // GPU grid renderer — renders Grafels with block characters via shader
-// Two data textures + font atlas = full Grafel rendering in one draw call
+// Two data textures + font atlas = full Graphon rendering in one draw call
 GPUGrid :: struct {
 	shader:     rl.Shader,
 	fg_tex:     rl.Texture2D, // RGBA: fg.r, fg.g, fg.b, char_index
@@ -208,7 +208,7 @@ gpu_grid_render :: proc(gg: ^GPUGrid, grid: ^Grid, font: rl.Font, is_compute: bo
 	cm := i32(is_compute ? 1 : 0)
 	rl.SetShaderValue(gg.shader, gg.compute_mode_loc, &cm, .INT)
 
-	// Grafel config
+	// Graphon config
 	edge_t := cfg != nil ? cfg.edge_threshold : f32(0.25)
 	density_t := cfg != nil ? cfg.density_thresholds : [4]f32{0.7, 0.45, 0.20, 0.05}
 	bg_f := cfg != nil ? cfg.density_bg_factor : f32(0.7)
