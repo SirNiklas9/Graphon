@@ -3,39 +3,83 @@ package main
 import rl "vendor:raylib"
 import rlgl "vendor:raylib/rlgl"
 import "core:math"
+import "core:math/linalg"
 
-// Ghost element — positioned along the line from light source through screen center
-// t=0 is at the light, t=1 is at screen center, t>1 is past center (reflected)
-LensFlareGhost :: struct {
-	t:     f32,       // position along flare line
-	size:  f32,       // radius relative to screen height (0.01 = 1% of screen)
-	alpha: f32,       // opacity (0-1)
-	color: rl.Color,  // tint (chromatic shift)
-	ring:  bool,      // true = ring outline, false = filled disc
-	sides: i32,       // 0 = circle, 4/6/8 = polygon
+// Raw GL for depth readback (opengl32.dll — no extension loading needed)
+GL_DEPTH_COMPONENT :: 0x1902
+GL_FLOAT           :: 0x1406
+
+foreign import opengl32 "system:opengl32.lib"
+
+@(default_calling_convention = "stdcall")
+foreign opengl32 {
+	glReadPixels :: proc(x, y, width, height: i32, format, type: u32, pixels: rawptr) ---
 }
 
-// Physically-motivated ghost chain — simulates internal reflections between lens elements
-// Each ghost has a unique chromatic tint from dispersion
+// Ghost element — positioned along the line from light source through screen center
+LensFlareGhost :: struct {
+	t:     f32,
+	size:  f32,
+	alpha: f32,
+	color: rl.Color,
+	ring:  bool,
+	sides: i32,
+}
+
 FLARE_GHOSTS :: [10]LensFlareGhost{
-	// Near-source ghosts (subtle, warm)
 	{t = 0.15, size = 0.008, alpha = 0.12, color = {255, 200, 120, 255}, ring = false, sides = 6},
 	{t = 0.30, size = 0.015, alpha = 0.06, color = {200, 220, 255, 255}, ring = true,  sides = 0},
-	// Mid-field ghosts (chromatic spread)
 	{t = 0.50, size = 0.025, alpha = 0.05, color = {120, 180, 255, 255}, ring = true,  sides = 0},
 	{t = 0.65, size = 0.010, alpha = 0.08, color = {180, 255, 180, 255}, ring = false, sides = 6},
 	{t = 0.80, size = 0.035, alpha = 0.04, color = {255, 180, 100, 255}, ring = true,  sides = 0},
-	// Center crossing
 	{t = 1.00, size = 0.012, alpha = 0.07, color = {200, 200, 255, 255}, ring = false, sides = 0},
-	// Past-center reflections (mirrored, larger, fainter)
 	{t = 1.20, size = 0.040, alpha = 0.03, color = {140, 160, 255, 255}, ring = true,  sides = 0},
 	{t = 1.40, size = 0.018, alpha = 0.05, color = {255, 200, 140, 255}, ring = false, sides = 6},
 	{t = 1.60, size = 0.050, alpha = 0.025,color = {100, 140, 255, 255}, ring = true,  sides = 0},
 	{t = 1.80, size = 0.014, alpha = 0.04, color = {180, 255, 200, 255}, ring = false, sides = 0},
 }
 
-// Sun occlusion — checked geometrically against scene objects
-sun_occlusion: f32 = 1.0
+// Depth-based occlusion for lens flare
+FlareOcclusion :: struct {
+	occlusion:   f32,   // smoothed 0-1 visibility
+	initialized: bool,
+}
+
+flare_occlusion_init :: proc(fo: ^FlareOcclusion) {
+	fo.occlusion = 1.0
+	fo.initialized = true
+}
+
+flare_occlusion_destroy :: proc(fo: ^FlareOcclusion) {
+	fo.initialized = false
+}
+
+// Read depth buffer at the sun's screen position and compare to determine occlusion.
+// Call AFTER geometry is drawn but BEFORE EndMode3D (depth buffer must be current).
+flare_occlusion_update :: proc(fo: ^FlareOcclusion, sun_screen: rl.Vector2) {
+	if !fo.initialized do return
+
+	w := i32(rl.GetScreenWidth())
+	h := i32(rl.GetScreenHeight())
+
+	// Flip Y: Raylib is top-left origin, GL is bottom-left origin
+	sx := clamp(i32(sun_screen.x), 0, w - 1)
+	sy := clamp(h - 1 - i32(sun_screen.y), 0, h - 1)
+
+	// Flush batch so depth buffer is up to date
+	rlgl.DrawRenderBatchActive()
+
+	// Read 1 pixel of depth at sun's projected position
+	depth: f32
+	glReadPixels(sx, sy, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth)
+
+	// If depth buffer value >= sun's depth, nothing is blocking
+	// (depth buffer has 1.0 where only sky is drawn)
+	target: f32 = depth >= 0.999 ? 1.0 : 0.0  // sky = 1.0 (nothing written), geometry < 1.0
+
+	speed := f32(20.0) * rl.GetFrameTime()
+	fo.occlusion += (target - fo.occlusion) * clamp(speed, 0, 1)
+}
 
 // Draw lens flare effects for all enabled directional lights.
 // 2D screen-space effect — call after EndMode3D but before EndTextureMode.
@@ -50,96 +94,70 @@ draw_lens_flares :: proc(s: ^Scene3D, cam: ^Camera) {
 		if !light.enabled do continue
 		if light.type != .Directional do continue
 
-		// Light direction (from target toward position = toward the sun)
-		light_dir := rl.Vector3{
+		light_dir := linalg.normalize(rl.Vector3{
 			light.position.x - light.target.x,
 			light.position.y - light.target.y,
 			light.position.z - light.target.z,
-		}
-		len := math.sqrt(light_dir.x*light_dir.x + light_dir.y*light_dir.y + light_dir.z*light_dir.z)
-		if len < 0.001 do continue
-		light_dir = {light_dir.x/len, light_dir.y/len, light_dir.z/len}
+		})
 
-		// Dot with view direction — skip if sun is behind camera
-		view_dir := rl.Vector3{
-			cam.rl_cam.target.x - cam.rl_cam.position.x,
-			cam.rl_cam.target.y - cam.rl_cam.position.y,
-			cam.rl_cam.target.z - cam.rl_cam.position.z,
-		}
-		view_dot := light_dir.x*view_dir.x + light_dir.y*view_dir.y + light_dir.z*view_dir.z
-		if view_dot <= 0 do continue
+		// Skip if sun is behind camera
+		view_dir := linalg.normalize(cam.rl_cam.target - cam.rl_cam.position)
+		view_dot := linalg.dot(light_dir, view_dir)
+		if view_dot <= 0.1 do continue
 
 		// Project sun position to screen
-		far_point := rl.Vector3{
-			cam.rl_cam.position.x + light_dir.x * 200,
-			cam.rl_cam.position.y + light_dir.y * 200,
-			cam.rl_cam.position.z + light_dir.z * 200,
-		}
+		far_point := cam.rl_cam.position + light_dir * 200
 		screen_pos := rl.GetWorldToScreen(far_point, cam.rl_cam)
 
-		if screen_pos.x < -200 || screen_pos.x > screen_w + 200 do continue
-		if screen_pos.y < -200 || screen_pos.y > screen_h + 200 do continue
+		// Only show flare when sun is reasonably on-screen
+		if screen_pos.x < -100 || screen_pos.x > screen_w + 100 do continue
+		if screen_pos.y < -100 || screen_pos.y > screen_h + 100 do continue
 
-		// Occlusion — check if sun direction is blocked by the ground or below horizon
-		// Sun below ground plane = fully occluded
-		if light_dir.y <= 0.0 {
-			sun_occlusion = max(sun_occlusion - rl.GetFrameTime() * 4.0, 0.0)
-		} else {
-			sun_occlusion = min(sun_occlusion + rl.GetFrameTime() * 4.0, 1.0)
-		}
+		// Occlusion
+		occ := s.flare_occlusion.initialized ? s.flare_occlusion.occlusion : f32(1.0)
 
-		// Intensity based on how centered the sun is + how much it's in view
-		dx := screen_pos.x - center.x
-		dy := screen_pos.y - center.y
-		dist := math.sqrt(dx * dx + dy * dy)
-		intensity := clamp(1.0 - (dist / max_dist) * 0.7, 0.0, 1.0)
-		intensity *= clamp(view_dot, 0, 1) // Fade as sun approaches edge of view
-		intensity *= intensity
-		intensity *= sun_occlusion // Fade when sun is behind geometry
+		// Intensity — stronger when looking directly at the sun
+		view_alignment := clamp((view_dot - 0.1) / 0.9, 0, 1) // 0 at edge, 1 looking straight at sun
+		intensity := view_alignment * view_alignment // quadratic falloff from center
+		intensity *= occ
 
 		if intensity < 0.005 do continue
 
+		rlgl.DrawRenderBatchActive()
 		rlgl.SetBlendMode(i32(rl.BlendMode.ADDITIVE))
 
-		// --- Sun glow (layered circles, largest first) ---
-		// Outer soft halo
-		halo_a := u8(clamp(intensity * 15, 0, 255))
-		rl.DrawCircleV(screen_pos, screen_h * 0.06 * intensity + 20, {255, 240, 220, halo_a})
-		// Mid glow
-		mid_a := u8(clamp(intensity * 35, 0, 255))
-		rl.DrawCircleV(screen_pos, screen_h * 0.02 * intensity + 8, {255, 250, 240, mid_a})
-		// Hot core
-		core_a := u8(clamp(intensity * 80, 0, 255))
-		rl.DrawCircleV(screen_pos, 4, {255, 255, 255, core_a})
+		// --- Sun glow ---
+		rl.DrawCircleV(screen_pos, 50 * intensity + 15, {255, 220, 180, u8(clamp(intensity * 30, 0, 255))})
+		rl.DrawCircleV(screen_pos, 20 * intensity + 6,  {255, 240, 210, u8(clamp(intensity * 60, 0, 255))})
+		rl.DrawCircleV(screen_pos, 6 * intensity + 2,   {255, 255, 240, u8(clamp(intensity * 120, 0, 255))})
+		rl.DrawCircleV(screen_pos, 3, {255, 255, 255, u8(clamp(intensity * 200, 0, 255))})
 
-		// --- Anamorphic streak (multiple thin lines at slight angles) ---
-		streak_base := screen_h * 0.08 * intensity
-		for si in 0 ..< 3 {
-			angle := f32(si - 1) * 0.02 // -0.02, 0, +0.02 radians
+		// --- Anamorphic streak ---
+		streak_len := screen_h * 0.4 * intensity
+		for si in 0 ..< 5 {
+			angle := f32(si - 2) * 0.015
 			cos_a := math.cos(angle)
 			sin_a := math.sin(angle)
-			s_len := streak_base * (1.0 - f32(abs(si - 1)) * 0.3) // center streak longest
-			s_alpha := u8(clamp(intensity * 18 * (1.0 - f32(abs(si - 1)) * 0.4), 0, 255))
+			s_len := streak_len * (1.0 - f32(abs(si - 2)) * 0.2)
+			s_alpha := u8(clamp(intensity * 100 * (1.0 - f32(abs(si - 2)) * 0.3), 0, 255))
+			thickness := 3.0 - f32(abs(si - 2)) * 0.8
 			if s_alpha < 1 do continue
 			rl.DrawLineEx(
 				{screen_pos.x - cos_a * s_len, screen_pos.y - sin_a * s_len},
 				{screen_pos.x + cos_a * s_len, screen_pos.y + sin_a * s_len},
-				1.5 - f32(abs(si - 1)) * 0.5,
+				thickness,
 				{255, 245, 230, s_alpha},
 			)
 		}
 
-		// --- Ghost chain along the flare line ---
+		// --- Ghost chain ---
 		for ghost in FLARE_GHOSTS {
-			// Position: interpolate from light source through screen center
 			gx := screen_pos.x + (center.x - screen_pos.x) * ghost.t
 			gy := screen_pos.y + (center.y - screen_pos.y) * ghost.t
 			gpos := rl.Vector2{gx, gy}
 
-			// Size scales with screen height for resolution independence
 			ghost_size := ghost.size * screen_h * (0.6 + intensity * 0.4)
 
-			// Alpha scales with intensity and distance from center
 			ghost_dist := math.sqrt((gx - center.x) * (gx - center.x) + (gy - center.y) * (gy - center.y))
 			edge_fade := clamp(1.0 - ghost_dist / max_dist * 0.5, 0.2, 1.0)
 			ga := u8(clamp(ghost.alpha * intensity * edge_fade * 255, 0, 255))
@@ -148,8 +166,7 @@ draw_lens_flares :: proc(s: ^Scene3D, cam: ^Camera) {
 			gc := rl.Color{ghost.color.r, ghost.color.g, ghost.color.b, ga}
 
 			if ghost.ring {
-				// Ring — draw as circle outline (multiple radii for thickness)
-				ring_thickness := max(ghost_size * 0.15, 1.5)
+				ring_thickness := max(ghost_size * 0.2, 2.0)
 				steps := i32(max(ghost_size * 2, 24))
 				if ghost.sides > 0 {
 					rl.DrawPolyLinesEx(gpos, ghost.sides, ghost_size, 0, ring_thickness, gc)
@@ -165,6 +182,7 @@ draw_lens_flares :: proc(s: ^Scene3D, cam: ^Camera) {
 			}
 		}
 
+		rlgl.DrawRenderBatchActive()
 		rlgl.SetBlendMode(i32(rl.BlendMode.ALPHA))
 	}
 }

@@ -137,6 +137,9 @@ Scene3D :: struct {
 	volumes:      [4]SceneVolume,
 	volume_count: int,
 
+	// Lens flare occlusion
+	flare_occlusion: FlareOcclusion,
+
 	// Material uniform locations
 	material_specular_loc:  i32,
 	material_roughness_loc: i32,
@@ -177,6 +180,8 @@ scene3d_create :: proc(cols, rows: int) -> Scene3D {
 		material_roughness_loc = rl.GetShaderLocation(shader, "materialRoughness"),
 		shadow                 = shadow_create(),
 	}
+
+	flare_occlusion_init(&s.flare_occlusion)
 
 	// Cache volume uniform locations
 	for i in 0 ..< 4 {
@@ -267,6 +272,7 @@ scene3d_destroy :: proc(s: ^Scene3D) {
 		if s.shader.id != 0 { rl.UnloadShader(s.shader) }
 	}
 	shadow_destroy(&s.shadow)
+	flare_occlusion_destroy(&s.flare_occlusion)
 	if s.sky_shader.id != 0 {
 		if s.sky_tex.id != 0 { rl.UnloadTexture(s.sky_tex) }
 		if s.sky_night_tex.id != 0 { rl.UnloadTexture(s.sky_night_tex) }
@@ -577,8 +583,11 @@ scene3d_render :: proc(
 		rlgl.DisableBackfaceCulling()
 		rlgl.DisableDepthMask()
 		rlgl.DisableDepthTest()
+		rlgl.DisableColorBlend()  // write sky directly — alpha=0 marks it for bloom exclusion
 		s.sky_model.materials[0].shader = s.sky_shader
 		rl.DrawModel(s.sky_model, cam.rl_cam.position, 1.0, rl.WHITE)
+		rlgl.DrawRenderBatchActive()  // flush before re-enabling blend
+		rlgl.EnableColorBlend()
 
 		if active_cube.id != 0 {
 			rlgl.ActiveTextureSlot(3)
@@ -613,12 +622,31 @@ scene3d_render :: proc(
 		draw_particles(particles, cam)
 	}
 
+	// Lens flare occlusion — read depth at sun's screen position
+	if s.flare_occlusion.initialized {
+		for i in 0 ..< s.light_count {
+			if !s.lights[i].enabled do continue
+			if s.lights[i].type != .Directional do continue
+			light_dir := linalg.normalize(s.lights[i].position - s.lights[i].target)
+			view_dir := linalg.normalize(cam.rl_cam.target - cam.rl_cam.position)
+			// Only read depth when sun is in front of camera
+			if linalg.dot(light_dir, view_dir) > 0 {
+				far_point := cam.rl_cam.position + light_dir * 200
+				sun_screen := rl.GetWorldToScreen(far_point, cam.rl_cam)
+				flare_occlusion_update(&s.flare_occlusion, sun_screen)
+			} else {
+				// Sun behind camera — fade out
+				speed := f32(20.0) * rl.GetFrameTime()
+				s.flare_occlusion.occlusion += (0 - s.flare_occlusion.occlusion) * clamp(speed, 0, 1)
+			}
+			break
+		}
+	}
+
 	rl.EndMode3D()
 
-	// Lens flares — tracks directional light position
-	// Lens flare disabled — no depth-based occlusion, shows through walls
-	// TODO: re-enable with GPU occlusion query or depth readback
-	// draw_lens_flares(s, cam)
+	// Lens flares — 2D screen-space, drawn after EndMode3D
+	draw_lens_flares(s, cam)
 
 	rl.EndTextureMode()
 
