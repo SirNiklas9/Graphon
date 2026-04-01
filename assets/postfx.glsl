@@ -38,22 +38,24 @@ void main() {
         color = texture(texture0, uv);
     }
 
-    // --- Bloom ---
+    // --- Bloom (soft glow from bright areas) ---
     if (enableBloom == 1) {
-        vec4 bloom = vec4(0.0);
-        float count = 0.0;
-        for (int x = -2; x <= 2; x++) {
-            for (int y = -2; y <= 2; y++) {
-                vec4 s = texture(texture0, uv + vec2(float(x), float(y)) * texelSize);
-                float brightness = dot(s.rgb, vec3(0.2126, 0.7152, 0.0722));
+        vec3 bloom = vec3(0.0);
+        float totalWeight = 0.0;
+        for (int x = -4; x <= 4; x++) {
+            for (int y = -4; y <= 4; y++) {
+                vec3 s = texture(texture0, uv + vec2(float(x), float(y)) * texelSize * 2.0).rgb;
+                float brightness = dot(s, vec3(0.2126, 0.7152, 0.0722));
                 if (brightness > bloomThreshold) {
-                    bloom += s;
-                    count += 1.0;
+                    // Gaussian-ish weight: closer samples contribute more
+                    float w = 1.0 / (1.0 + float(x*x + y*y) * 0.15);
+                    bloom += s * w;
+                    totalWeight += w;
                 }
             }
         }
-        if (count > 0.0) bloom /= count;
-        color.rgb += bloom.rgb * bloomIntensity;
+        if (totalWeight > 0.0) bloom /= totalWeight;
+        color.rgb += bloom * bloomIntensity;
     }
 
     // --- Scanlines ---

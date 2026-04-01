@@ -10,8 +10,7 @@ light: point -6,4,-6 color:0.2,0.3,0.8
 light: point 8,3,8 color:0.15,0.6,0.2
 
 # Atmosphere
-volume: -30,-1,-30 -10,10,30 color:0.05,0.08,0.2 density:0.3
-fog: color:0.05,0.05,0.08 start:30 end:80
+fog: color:0.7,0.78,0.85 start:40 end:120
 
 # Ground (centered at origin, 40x40)
 include: ground.grf at -20,-1,-20 scale:1
@@ -22,11 +21,11 @@ include: red_cube.grf at -1,0,-1 scale:1
 # Pillars (spread out, symmetrical)
 include: pillar_green.grf at -12,0,-8 scale:1
 include: pillar_blue.grf at 12,0,-8 scale:1
-include: pillar_pink.grf at -12,0,8 scale:1
+include: pillar_pink.grf at -12,0,4 scale:1
 include: pillar_cyan.grf at 12,0,8 scale:1
 
 # Models (spaced apart from primitives)
-include: suzanne_obj.grf at -8,2,0 scale:2
+include: suzanne_obj.grf at -4,2,12 scale:2
 include: bunny_obj.grf at 8,0,0 scale:5
 
 # Billboard (floating, visible from spawn)

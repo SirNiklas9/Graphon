@@ -80,9 +80,10 @@ void main() {
         // Scene texture has correct per-pixel lighting — colors are always real
         // Characters provide sub-cell detail and the Graphon visual identity
 
-        // FULL_ONLY: raw pixel pass-through, no Graphon processing
+        // FULL_ONLY: solid color blocks — sample at cell center so font size = resolution
         if (fidelityLevel == 0) {
-            finalColor = vec4(texture(texture0, fragTexCoord).rgb, 1.0);
+            vec2 cellCenter = (cellCoord + 0.5) / gridSize;
+            finalColor = vec4(texture(texture0, cellCenter).rgb, 1.0);
             return;
         }
 
@@ -101,209 +102,36 @@ void main() {
         fg = (qTL + qTR + qBL + qBR) * 0.25;
         float brightness = dot(fg, vec3(0.299, 0.587, 0.114));
 
-        // Background: same real color, slightly darkened — gives density chars visibility
+        // Check if cell is smooth (all quadrants similar) or has detail
+        // Smooth areas (sky, flat surfaces): show solid averaged color
+        // Detail areas (geometry edges, shadows): show density characters
+        float variance = (length(qTL - fg) + length(qTR - fg) +
+                          length(qBL - fg) + length(qBR - fg)) * 0.25;
+
+        if (variance < 0.08) {
+            // Smooth area — solid cell color, no density pattern
+            finalColor = vec4(fg, 1.0);
+            return;
+        }
+
+        // Detail area — use density characters for Grafel texture
         bg = fg * cfgDensityBgFactor;
-
-        // Quadrant brightnesses for edge detection
-        float bTL = dot(qTL, vec3(0.299, 0.587, 0.114));
-        float bTR = dot(qTR, vec3(0.299, 0.587, 0.114));
-        float bBL = dot(qBL, vec3(0.299, 0.587, 0.114));
-        float bBR = dot(qBR, vec3(0.299, 0.587, 0.114));
-
-        float bTop = (bTL + bTR) * 0.5;
-        float bBot = (bBL + bBR) * 0.5;
-        float bLeft = (bTL + bBL) * 0.5;
-        float bRight = (bTR + bBR) * 0.5;
-
-        vec3 cTop = (qTL + qTR) * 0.5;
-        vec3 cBot = (qBL + qBR) * 0.5;
-        vec3 cLeft = (qTL + qBL) * 0.5;
-        vec3 cRight = (qTR + qBR) * 0.5;
-
-        float vEdge = abs(bTop - bBot);
-        float hEdge = abs(bLeft - bRight);
-        float maxEdge = max(vEdge, hEdge);
-        float et = cfgEdgeThreshold;
         vec2 sp = floor(pixelPos);
-
-        // ─── Quarter blocks (fidelity >= ALL, diagonal/complex edges) ───
-        if (fidelityLevel >= 4 && maxEdge > et) {
-            float qSpread = max(max(bTL, bTR), max(bBL, bBR))
-                           - min(min(bTL, bTR), min(bBL, bBR));
-            if (qSpread > et) {
-                float avg = brightness;
-                bool onTL = bTL > avg;
-                bool onTR = bTR > avg;
-                bool onBL = bBL > avg;
-                bool onBR = bBR > avg;
-                int cnt = (onTL?1:0) + (onTR?1:0) + (onBL?1:0) + (onBR?1:0);
-
-                // Only use quarters for non-axis-aligned patterns (diagonals, corners)
-                bool isAxisAligned = (onTL == onTR && onBL == onBR) ||
-                                     (onTL == onBL && onTR == onBR);
-
-                if (cnt >= 1 && cnt <= 3 && !isAxisAligned) {
-                    // FG = bright quadrants' real color, BG = dark quadrants' real color
-                    vec3 brightC = vec3(0.0), darkC = vec3(0.0);
-                    float bCnt = 0.0, dCnt = 0.0;
-                    if (onTL) { brightC += qTL; bCnt += 1.0; } else { darkC += qTL; dCnt += 1.0; }
-                    if (onTR) { brightC += qTR; bCnt += 1.0; } else { darkC += qTR; dCnt += 1.0; }
-                    if (onBL) { brightC += qBL; bCnt += 1.0; } else { darkC += qBL; dCnt += 1.0; }
-                    if (onBR) { brightC += qBR; bCnt += 1.0; } else { darkC += qBR; dCnt += 1.0; }
-                    if (bCnt > 0.0) brightC /= bCnt;
-                    if (dCnt > 0.0) darkC /= dCnt;
-
-                    bool inTL = localPos.x < 0.5 && localPos.y < 0.5;
-                    bool inTR = localPos.x >= 0.5 && localPos.y < 0.5;
-                    bool inBL = localPos.x < 0.5 && localPos.y >= 0.5;
-                    bool inBR = localPos.x >= 0.5 && localPos.y >= 0.5;
-                    bool pixelOn = (inTL && onTL) || (inTR && onTR) || (inBL && onBL) || (inBR && onBR);
-                    finalColor = vec4(pixelOn ? brightC : darkC, 1.0);
-                    return;
-                }
-            }
-        }
-
-        // ─── Fractional bars (fidelity >= FRACTIONAL, precise edge position) ───
-        if (fidelityLevel >= 3 && maxEdge > et) {
-            if (vEdge >= hEdge) {
-                // Sample 8 points along vertical to find edge position
-                float cellMidX = (cellStart.x + cellEnd.x) * 0.5;
-                int topLikeCount = 0;
-                for (int i = 0; i < 8; i++) {
-                    float t = (float(i) + 0.5) / 8.0;
-                    float yUV = mix(cellStart.y, cellEnd.y, t);
-                    float b = dot(texture(texture0, vec2(cellMidX, yUV)).rgb, vec3(0.299, 0.587, 0.114));
-                    if (abs(b - bTop) < abs(b - bBot)) topLikeCount++;
-                }
-                float splitY = clamp(float(topLikeCount) / 8.0, 0.125, 0.875);
-                finalColor = vec4(localPos.y < splitY ? cTop : cBot, 1.0);
-                return;
-            } else {
-                float cellMidY = (cellStart.y + cellEnd.y) * 0.5;
-                int leftLikeCount = 0;
-                for (int i = 0; i < 8; i++) {
-                    float t = (float(i) + 0.5) / 8.0;
-                    float xUV = mix(cellStart.x, cellEnd.x, t);
-                    float b = dot(texture(texture0, vec2(xUV, cellMidY)).rgb, vec3(0.299, 0.587, 0.114));
-                    if (abs(b - bLeft) < abs(b - bRight)) leftLikeCount++;
-                }
-                float splitX = clamp(float(leftLikeCount) / 8.0, 0.125, 0.875);
-                finalColor = vec4(localPos.x < splitX ? cLeft : cRight, 1.0);
-                return;
-            }
-        }
-
-        // ─── Half blocks (fidelity >= HALF, strong axis-aligned edges) ───
-        if (fidelityLevel >= 2 && maxEdge > et) {
-            if (vEdge > hEdge) {
-                vec3 brightSide = bTop > bBot ? cTop : cBot;
-                vec3 darkSide = bTop > bBot ? cBot : cTop;
-                bool topBright = bTop > bBot;
-                float inTop = localPos.y < 0.5 ? 1.0 : 0.0;
-                float pattern = topBright ? inTop : (1.0 - inTop);
-                finalColor = vec4(mix(darkSide, brightSide, pattern), 1.0);
-                return;
-            } else {
-                vec3 brightSide = bLeft > bRight ? cLeft : cRight;
-                vec3 darkSide = bLeft > bRight ? cRight : cLeft;
-                bool leftBright = bLeft > bRight;
-                float inLeft = localPos.x < 0.5 ? 1.0 : 0.0;
-                float pattern = leftBright ? inLeft : (1.0 - inLeft);
-                finalColor = vec4(mix(darkSide, brightSide, pattern), 1.0);
-                return;
-            }
-        }
-
-        // ─── Smooth gradient rendering — all 32 characters, real colors ───
-        // Uses directional bars aligned to the lighting gradient for 8 fill levels
-        // Bayer dithering between adjacent levels gives ~128 effective brightness steps
-        // fg = real cell color, bg = slightly darkened — character provides texture
-
-        float vGrad = bTop - bBot;   // positive = top brighter
-        float hGrad = bLeft - bRight; // positive = left brighter
-        float absV = abs(vGrad);
-        float absH = abs(hGrad);
-
-        // Bayer dither value for this cell (smooth transitions between levels)
-        float dither = bayer4x4(cellCoord);
-
-        // Coverage from brightness — 8 levels (1/8 steps) with dithered transitions
         float exactCov = clamp(brightness, 0.0, 1.0);
-        float baseCov = floor(exactCov * 8.0) / 8.0;
-        float nextCov = min(baseCov + 0.125, 1.0);
-        float fracCov = (exactCov - baseCov) * 8.0;
-        float fill = fracCov > dither ? nextCov : baseCov;
-        fill = clamp(fill, 0.0, 1.0);
-
         float pattern;
-        bool hasGradient = max(absV, absH) > et * 0.75;
-
-        if (fidelityLevel >= 3 && hasGradient) {
-            // Diagonal gradient — quarter blocks
-            bool isDiagonal = absV > 0.01 && absH > 0.01 && absV / absH < 2.5 && absH / absV < 2.5;
-
-            if (fidelityLevel >= 4 && isDiagonal) {
-                // Quarter blocks for diagonal gradients
-                bool onTL = bTL > brightness;
-                bool onTR = bTR > brightness;
-                bool onBL = bBL > brightness;
-                bool onBR = bBR > brightness;
-
-                bool inTL = localPos.x < 0.5 && localPos.y < 0.5;
-                bool inTR = localPos.x >= 0.5 && localPos.y < 0.5;
-                bool inBL = localPos.x < 0.5 && localPos.y >= 0.5;
-                bool inBR = localPos.x >= 0.5 && localPos.y >= 0.5;
-
-                bool pixelOn = (inTL && onTL) || (inTR && onTR) || (inBL && onBL) || (inBR && onBR);
-                pattern = pixelOn ? 1.0 : 0.0;
-            } else if (absV >= absH) {
-                // Vertical gradient — fill from bright side
-                if (vGrad > 0.0) {
-                    pattern = localPos.y < fill ? 1.0 : 0.0;
-                } else {
-                    pattern = localPos.y >= (1.0 - fill) ? 1.0 : 0.0;
-                }
-            } else {
-                // Horizontal gradient — fill from bright side
-                if (hGrad > 0.0) {
-                    pattern = localPos.x < fill ? 1.0 : 0.0;
-                } else {
-                    pattern = localPos.x >= (1.0 - fill) ? 1.0 : 0.0;
-                }
-            }
-        } else if (fidelityLevel >= 2 && hasGradient) {
-            // Half blocks only — vertical or horizontal fill
-            if (absV >= absH) {
-                if (vGrad > 0.0) {
-                    pattern = localPos.y < fill ? 1.0 : 0.0;
-                } else {
-                    pattern = localPos.y >= (1.0 - fill) ? 1.0 : 0.0;
-                }
-            } else {
-                if (hGrad > 0.0) {
-                    pattern = localPos.x < fill ? 1.0 : 0.0;
-                } else {
-                    pattern = localPos.x >= (1.0 - fill) ? 1.0 : 0.0;
-                }
-            }
-        } else {
-            // Density only (fidelity 1) or no gradient — 4 density patterns with dithered transitions
-            float densityF = clamp((1.0 - exactCov) * 4.0, 0.0, 3.99);
-            int baseD = int(floor(densityF));
-            float fracD = fract(densityF);
-            int dLevel = fracD > dither ? min(baseD + 1, 3) : baseD;
-
-            if (dLevel == 0) {
-                pattern = 1.0; // █
-            } else if (dLevel == 1) {
-                vec2 p = mod(sp, 2.0); // ▓
+        {
+            if (exactCov >= cfgDensityThresholds.x) {
+                pattern = 1.0; // █ solid
+            } else if (exactCov >= cfgDensityThresholds.y) {
+                vec2 p = mod(sp, 2.0); // ▓ 75%
                 pattern = (p.x < 1.0 && p.y < 1.0) ? 0.0 : 1.0;
-            } else if (dLevel == 2) {
-                pattern = mod(sp.x + sp.y, 2.0) < 1.0 ? 1.0 : 0.0; // ▒
-            } else {
-                vec2 p = mod(sp, 2.0); // ░
+            } else if (exactCov >= cfgDensityThresholds.z) {
+                pattern = mod(sp.x + sp.y, 2.0) < 1.0 ? 1.0 : 0.0; // ▒ 50%
+            } else if (exactCov >= cfgDensityThresholds.w) {
+                vec2 p = mod(sp, 2.0); // ░ 25%
                 pattern = (p.x >= 1.0 && p.y >= 1.0) ? 1.0 : 0.0;
+            } else {
+                pattern = 0.0; // below minimum — solid bg
             }
         }
 

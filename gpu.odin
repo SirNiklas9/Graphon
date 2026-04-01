@@ -39,11 +39,11 @@ GPUPipeline :: struct {
 
 gpu_create :: proc(screen_w, screen_h: i32) -> GPUPipeline {
 	gpu := GPUPipeline{
-		bloom_intensity    = 0.6,
-		bloom_threshold    = 0.35,
+		bloom_intensity    = 0.25,
+		bloom_threshold    = 0.75,
 		scanline_intensity = 0.3,
 		aberration_amount  = 2.0,
-		active_fx          = {.Bloom},
+		active_fx          = {},
 	}
 
 	gpu.target = rl.LoadRenderTexture(screen_w, screen_h)

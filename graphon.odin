@@ -54,8 +54,16 @@ graphon_resize_font :: proc(g: ^Graphon, new_size: i32) {
 // draw_fn: optional callback for custom primitives (ground, cubes, cylinders, etc.)
 // Leaves BeginDrawing open for caller to draw overlays (ImGui, cursor, etc.) before EndDrawing
 graphon_render_scene :: proc(g: ^Graphon, scene: ^Scene, time: f32, draw_fn: proc(^Scene3D, bool) = nil, particles: []RenderParticle = nil) {
-	// Sync scene data (lights, volumes) to renderer
+	// Sync scene data (lights, volumes, fog) to renderer
 	scene3d_apply_scene(&g.scene3d, scene)
+
+	// Apply scene fog settings to config (scene overrides defaults)
+	if scene.fog_enabled {
+		g.config.fog_enabled = true
+		g.config.fog_color = {scene.fog_color.x, scene.fog_color.y, scene.fog_color.z}
+		g.config.fog_start = scene.fog_start
+		g.config.fog_end = scene.fog_end
+	}
 
 	// Render 3D scene
 	scene3d_render(&g.scene3d, &scene.camera, scene.objects[:scene.object_count], time, draw_fn, &g.config, particles)

@@ -53,9 +53,9 @@ config_default :: proc() -> Config {
 		ambient         = {0.06, 0.06, 0.1},
 
 		fog_enabled     = true,
-		fog_color       = {0.05, 0.05, 0.08},
-		fog_start       = 25,
-		fog_end         = 60,
+		fog_color       = {0.6, 0.7, 0.8},
+		fog_start       = 40,
+		fog_end         = 120,
 
 		shadow_map_size = 4096,
 		shadow_radius   = 15,

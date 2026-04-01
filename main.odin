@@ -64,6 +64,26 @@ main :: proc() {
 	fire_pos := rl.Vector3{5, 0.5, -3}
 
 	time: f32 = 0
+	sun_angle: f32 = 0 // horizontal sun angle in radians, 0 = default from .grf
+
+	// Store original directional light elevation for sun rotation
+	orig_sun_dist: f32 = 1.0
+	orig_sun_elevation: f32 = 0.5
+	for i in 0 ..< min(scene.light_count, MAX_SCENE_LIGHTS) {
+		if scene.lights[i].enabled && scene.lights[i].type == .Directional {
+			d := rl.Vector3{
+				scene.lights[i].position.x - scene.lights[i].target.x,
+				scene.lights[i].position.y - scene.lights[i].target.y,
+				scene.lights[i].position.z - scene.lights[i].target.z,
+			}
+			orig_sun_dist = math.sqrt(d.x*d.x + d.y*d.y + d.z*d.z)
+			if orig_sun_dist > 0.001 {
+				orig_sun_elevation = math.asin(clamp(d.y / orig_sun_dist, -1, 1))
+				sun_angle = math.atan2(d.z, d.x)
+			}
+			break
+		}
+	}
 
 	for !rl.WindowShouldClose() {
 		dt := rl.GetFrameTime()
@@ -78,14 +98,25 @@ main :: proc() {
 		// Data input (UDP) — disabled for now
 		// data_input_poll(&data_in, scene)
 
-		// Hot reload
-		if grf_watcher_update(&watcher, dt) {
-			rl.TraceLog(.INFO, "GRF file changed — reloading scene")
-			grf_loaded_scene_destroy(&loaded)
-			new_loaded, new_ok := grf_load_scene("assets/demo.grf")
-			if new_ok {
-				loaded = new_loaded
-				scene = &loaded.scene
+		// Hot reload — disabled (causes crashes on scene swap)
+		// reload_pending := grf_watcher_update(&watcher, dt)
+		reload_pending := false
+
+		// Sun controls — [/]: rotate east/west, ;/': raise/lower (time of day)
+		if rl.IsKeyDown(.LEFT_BRACKET)  { sun_angle -= dt * 0.5 }
+		if rl.IsKeyDown(.RIGHT_BRACKET) { sun_angle += dt * 0.5 }
+		if rl.IsKeyDown(.APOSTROPHE)    { orig_sun_elevation = min(orig_sun_elevation + dt * 0.3, math.PI * 0.48) }
+		if rl.IsKeyDown(.SEMICOLON)     { orig_sun_elevation = max(orig_sun_elevation - dt * 0.3, -0.05) }
+		// Update directional light from sun angle + elevation
+		for i in 0 ..< scene.light_count {
+			if scene.lights[i].type == .Directional {
+				horiz := math.cos(orig_sun_elevation) * orig_sun_dist
+				scene.lights[i].position = {
+					scene.lights[i].target.x + math.cos(sun_angle) * horiz,
+					scene.lights[i].target.y + math.sin(orig_sun_elevation) * orig_sun_dist,
+					scene.lights[i].target.z + math.sin(sun_angle) * horiz,
+				}
+				break
 			}
 		}
 
@@ -126,6 +157,7 @@ main :: proc() {
 		// Controls
 		if rl.IsKeyPressed(.F1) { g.config.show_grid_lines = !g.config.show_grid_lines }
 		if rl.IsKeyPressed(.F2) { g.config.show_cell_coords = !g.config.show_cell_coords }
+		if rl.IsKeyPressed(.F3) { g.scene3d.sky_night_mode = !g.scene3d.sky_night_mode }
 		if rl.IsKeyPressed(.F4) { graphon_toggle_fx(&g, .Bloom) }
 		if rl.IsKeyPressed(.F5) { graphon_toggle_fx(&g, .Scanlines) }
 		if rl.IsKeyPressed(.F6) { graphon_toggle_fx(&g, .Chromatic) }
@@ -169,8 +201,16 @@ main :: proc() {
 			imgui.Text(cstring(raw_data(fid_buf[:])))
 
 			imgui.Separator()
+			sun_buf: [64]u8
+			sun_deg := sun_angle * 57.2958
+			sun_elev := orig_sun_elevation * 57.2958
+			fmt.bprintf(sun_buf[:], "Sun: %.0f deg  %.0f elev\x00", sun_deg, sun_elev)
+			imgui.Text(cstring(raw_data(sun_buf[:])))
+			imgui.Text("[/]:Rotate  ;/':Elevate")
+
+			imgui.Separator()
 			imgui.Text("WASD:Move  RMB:Look  QE:Up/Down")
-			imgui.Text("F4:Bloom F5:Scan F6:Chrom F7:Fidelity")
+			imgui.Text("F3:Night F4:Bloom F5:Scan F6:Chrom")
 		}
 		imgui.End()
 		rlimgui.end()
@@ -189,6 +229,17 @@ main :: proc() {
 		rl.DrawTriangleLines({f32(mx), f32(my)}, {f32(mx), f32(my + 16)}, {f32(mx + 12), f32(my + 12)}, {40, 40, 40, 255})
 
 		rl.EndDrawing()
+
+		// Hot reload — after frame is fully complete
+		if reload_pending {
+			new_loaded, new_ok := grf_load_scene("assets/demo.grf")
+			if new_ok {
+				grf_loaded_scene_destroy(&loaded)
+				loaded = new_loaded
+				scene = &loaded.scene
+				rl.TraceLog(.INFO, "Scene reloaded successfully")
+			}
+		}
 	}
 }
 
