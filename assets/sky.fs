@@ -33,12 +33,13 @@ void main() {
         float lightDot = max(dot(dir, lightDir), 0.0);
         if (nightMode == 0) {
             vec3 sunCol = vec3(1.0, 0.95, 0.85);
-            sky += sunCol * (pow(lightDot, 800.0) * 5.0 + pow(lightDot, 64.0) * 0.3 + pow(lightDot, 8.0) * 0.05);
+            float sunTotal = pow(lightDot, 2000.0) * 1.5 + pow(lightDot, 128.0) * 0.4 + pow(lightDot, 12.0) * 0.08;
+            sky += sunCol * min(sunTotal, 1.0);
         } else {
             vec3 moonCol = vec3(0.9, 0.92, 1.0);
             sky += moonCol * (pow(lightDot, 1200.0) * 3.0 + pow(lightDot, 80.0) * 0.15);
         }
-        finalColor = vec4(sky, 1.0);
+        finalColor = vec4(sky, 0.0);  // alpha=0 marks sky for bloom exclusion
         return;
     }
 
@@ -54,12 +55,12 @@ void main() {
         float lightDot = max(dot(dir, lightDir), 0.0);
 
         if (nightMode == 0) {
-            // Sun — small bright disc with corona
+            // Sun — soft disc with wide corona (lens flare handles the blinding effect)
             vec3 sunCol = vec3(1.0, 0.95, 0.85);
-            float disc   = pow(lightDot, 800.0) * 5.0;   // small tight core
-            float corona = pow(lightDot, 64.0) * 0.3;    // subtle glow
-            float haze   = pow(lightDot, 8.0) * 0.05;    // faint warm haze
-            sky += sunCol * (disc + corona + haze);
+            float disc   = pow(lightDot, 2000.0) * 1.5;  // tiny tight core
+            float corona = pow(lightDot, 128.0) * 0.4;   // warm glow ring
+            float haze   = pow(lightDot, 12.0) * 0.08;   // wide atmospheric haze
+            sky += sunCol * min(disc + corona + haze, 1.0);
         } else {
             // Moon — cool white disc, no corona, subtle glow
             vec3 moonCol = vec3(0.9, 0.92, 1.0);
@@ -68,7 +69,7 @@ void main() {
             sky += moonCol * (disc + glow);
         }
 
-        finalColor = vec4(sky, 1.0);
+        finalColor = vec4(sky, 0.0);  // alpha=0 marks sky for bloom exclusion
         return;
     }
 
@@ -101,10 +102,10 @@ void main() {
     float lightDotP = max(dot(dir, normalize(sunDirection)), 0.0);
     if (nightMode == 0) {
         vec3 sunCol = vec3(1.0, 0.95, 0.85);
-        float disc   = pow(lightDotP, 800.0) * 5.0;
-        float corona = pow(lightDotP, 64.0) * 0.3;
-        float haze   = pow(lightDotP, 8.0) * 0.05;
-        skyColor += sunCol * (disc + corona + haze);
+        float disc   = pow(lightDotP, 2000.0) * 1.5;
+        float corona = pow(lightDotP, 128.0) * 0.4;
+        float haze   = pow(lightDotP, 12.0) * 0.08;
+        skyColor += sunCol * min(disc + corona + haze, 1.0);
     } else {
         vec3 moonCol = vec3(0.9, 0.92, 1.0);
         float disc = pow(lightDotP, 1200.0) * 3.0;
@@ -112,5 +113,5 @@ void main() {
         skyColor += moonCol * (disc + glow);
     }
 
-    finalColor = vec4(skyColor, 1.0);
+    finalColor = vec4(skyColor, 0.0);  // alpha=0 marks sky for bloom exclusion
 }

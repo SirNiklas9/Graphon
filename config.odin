@@ -60,8 +60,8 @@ config_default :: proc() -> Config {
 		shadow_map_size = 4096,
 		shadow_radius   = 15,
 
-		bloom_intensity = 0.6,
-		bloom_threshold = 0.35,
+		bloom_intensity = 0.5,
+		bloom_threshold = 0.3,
 
 		sky_enabled     = true,
 

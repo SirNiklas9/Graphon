@@ -3,7 +3,8 @@
 in vec2 fragTexCoord;
 out vec4 finalColor;
 
-uniform sampler2D texture0;
+uniform sampler2D texture0;   // original scene
+uniform sampler2D bloomTex;   // pre-blurred bloom result
 uniform vec2 resolution;
 uniform float time;
 
@@ -23,8 +24,8 @@ uniform float scanlineIntensity;
 uniform float aberrationAmount;
 
 void main() {
-    vec2 texelSize = 1.0 / resolution;
     vec2 uv = fragTexCoord;
+    vec2 texelSize = 1.0 / resolution;
 
     // --- Chromatic aberration (applied to UV before sampling) ---
     vec4 color;
@@ -38,23 +39,9 @@ void main() {
         color = texture(texture0, uv);
     }
 
-    // --- Bloom (soft glow from bright areas) ---
+    // --- Bloom (add pre-blurred bloom from multi-pass pipeline) ---
     if (enableBloom == 1) {
-        vec3 bloom = vec3(0.0);
-        float totalWeight = 0.0;
-        for (int x = -4; x <= 4; x++) {
-            for (int y = -4; y <= 4; y++) {
-                vec3 s = texture(texture0, uv + vec2(float(x), float(y)) * texelSize * 2.0).rgb;
-                float brightness = dot(s, vec3(0.2126, 0.7152, 0.0722));
-                if (brightness > bloomThreshold) {
-                    // Gaussian-ish weight: closer samples contribute more
-                    float w = 1.0 / (1.0 + float(x*x + y*y) * 0.15);
-                    bloom += s * w;
-                    totalWeight += w;
-                }
-            }
-        }
-        if (totalWeight > 0.0) bloom /= totalWeight;
+        vec3 bloom = texture(bloomTex, uv).rgb;
         color.rgb += bloom * bloomIntensity;
     }
 
