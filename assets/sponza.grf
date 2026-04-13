@@ -1,0 +1,5 @@
+type: object
+model: Sponza/Sponza.gltf
+color: 255,255,255
+specular: 0.4
+roughness: 0.6

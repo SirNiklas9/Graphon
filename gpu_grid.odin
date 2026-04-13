@@ -66,6 +66,7 @@ gpu_grid_create :: proc(cols, rows: int) -> GPUGrid {
 		gg.glyph_rect_locs[i] = rl.GetShaderLocation(gg.shader, rl.TextFormat("glyphRects[%d]", i32(i)))
 	}
 
+
 	gpu_grid_alloc(&gg, cols, rows)
 	gg.enabled = true
 	return gg

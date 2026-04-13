@@ -7,14 +7,14 @@ import "core:fmt"
 import imgui "lib:odin-imgui"
 import rlimgui "lib:imgui_impl_raylib"
 
-SCREEN_W     :: 1920
-SCREEN_H     :: 1080
-INIT_FONT_SZ :: i32(1)
-FONT_PATH    :: "assets/JetBrainsMonoNLNerdFont-Regular.ttf"
+INIT_SCREEN_W :: 1920
+INIT_SCREEN_H :: 1080
+INIT_FONT_SZ  :: i32(1)
+FONT_PATH     :: "assets/JetBrainsMonoNLNerdFont-Regular.ttf"
 
 main :: proc() {
-	rl.SetConfigFlags({.VSYNC_HINT})
-	rl.InitWindow(SCREEN_W, SCREEN_H, "Graphon")
+	rl.SetConfigFlags({.VSYNC_HINT, .WINDOW_RESIZABLE})
+	rl.InitWindow(INIT_SCREEN_W, INIT_SCREEN_H, "Graphon")
 	defer rl.CloseWindow()
 	rl.SetTargetFPS(0)
 	rl.HideCursor()
@@ -26,7 +26,7 @@ main :: proc() {
 	defer rlimgui.shutdown()
 
 	// --- Graphon renderer ---
-	g := graphon_init(SCREEN_W, SCREEN_H, FONT_PATH, INIT_FONT_SZ)
+	g := graphon_init(i32(rl.GetScreenWidth()), i32(rl.GetScreenHeight()), FONT_PATH, INIT_FONT_SZ)
 	defer graphon_destroy(&g)
 
 	// --- Scene from .grf ---
@@ -89,6 +89,17 @@ main :: proc() {
 		dt := rl.GetFrameTime()
 		time += dt
 
+		// Window resize
+		if rl.IsWindowResized() {
+			new_w := i32(rl.GetScreenWidth())
+			new_h := i32(rl.GetScreenHeight())
+			if new_w > 0 && new_h > 0 {
+				g.width = new_w
+				g.height = new_h
+				graphon_resize_font(&g, g.font_size) // rebuilds grid + render targets
+			}
+		}
+
 		// Font size
 		if rl.IsKeyPressed(.UP)    { graphon_resize_font(&g, g.font_size + 2) }
 		if rl.IsKeyPressed(.DOWN)  { graphon_resize_font(&g, g.font_size - 2) }
@@ -98,9 +109,8 @@ main :: proc() {
 		// Data input (UDP) — disabled for now
 		// data_input_poll(&data_in, scene)
 
-		// Hot reload — disabled (causes crashes on scene swap)
-		// reload_pending := grf_watcher_update(&watcher, dt)
-		reload_pending := false
+		// Hot reload
+		reload_pending := grf_watcher_update(&watcher, dt)
 
 		// Sun controls — [/]: rotate east/west, ;/': raise/lower (time of day)
 		if rl.IsKeyDown(.LEFT_BRACKET)  { sun_angle -= dt * 0.5 }
@@ -163,13 +173,17 @@ main :: proc() {
 		if rl.IsKeyPressed(.F6) { graphon_toggle_fx(&g, .Chromatic) }
 		if rl.IsKeyPressed(.F7) {
 			g.grid.forced_fidelity = !g.grid.forced_fidelity
-			if !g.grid.forced_fidelity { g.grid.fidelity = .ALL }
+			if !g.grid.forced_fidelity {
+				// Recompute from cell size instead of hardcoding .ALL
+				g.grid.fidelity = fidelity_from_cell_size(min(g.grid.cell_w, g.grid.cell_h))
+			}
 		}
 		if rl.IsKeyPressed(.F8) && g.grid.forced_fidelity {
 			g.grid.fidelity = Fidelity((int(g.grid.fidelity) + 1) % 5)
 		}
 		if rl.IsKeyPressed(.F11) { rl.ToggleBorderlessWindowed() }
 		if rl.IsKeyPressed(.F12) { export_screenshot() }
+
 
 		// 2D screen-space sprite (bottom-right corner)
 		rl.DrawTexture(test_sprite, rl.GetScreenWidth() - test_sprite.width - 20, rl.GetScreenHeight() - test_sprite.height - 20, rl.WHITE)
@@ -209,6 +223,7 @@ main :: proc() {
 			imgui.Text("[/]:Rotate  ;/':Elevate")
 
 			imgui.Separator()
+			imgui.Separator()
 			imgui.Text("WASD:Move  RMB:Look  QE:Up/Down")
 			imgui.Text("F3:Night F4:Bloom F5:Scan F6:Chrom")
 		}
@@ -234,9 +249,14 @@ main :: proc() {
 		if reload_pending {
 			new_loaded, new_ok := grf_load_scene("assets/demo.grf")
 			if new_ok {
+				// Reset Scene3D light/volume state before destroying old scene
+				g.scene3d.light_count = 0
+				g.scene3d.volume_count = 0
 				grf_loaded_scene_destroy(&loaded)
 				loaded = new_loaded
 				scene = &loaded.scene
+				// Re-sync lights and volumes from new scene
+				scene3d_apply_scene(&g.scene3d, scene)
 				rl.TraceLog(.INFO, "Scene reloaded successfully")
 			}
 		}

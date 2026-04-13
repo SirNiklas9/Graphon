@@ -104,3 +104,53 @@ grid_get :: proc(grid: ^Grid, col, row: int) -> Grafel {
 	}
 	return Grafel{}
 }
+
+// Convert a GrfGrafel (2D pixel art) into a billboarded 3D model.
+// Rasterizes each row's characters as colored rectangles into an RGBA texture,
+// maps it onto a plane mesh, returns a Model ready for scene_add_model.
+grafel_to_billboard :: proc(g: ^GrfGrafel) -> (rl.Model, bool) {
+	if len(g.rows) == 0 do return {}, false
+
+	// Determine pixel dimensions: 8px per cell
+	cell_px :: 8
+	w := g.width > 0 ? g.width : 16
+	h := g.height > 0 ? g.height : len(g.rows)
+	img_w := i32(w * cell_px)
+	img_h := i32(h * cell_px)
+
+	// Create image and fill with transparent black
+	img := rl.GenImageColor(img_w, img_h, {0, 0, 0, 0})
+
+	// Draw each row
+	for ri in 0 ..< min(len(g.rows), h) {
+		row := &g.rows[ri]
+		// Each character in the row text = one cell
+		ci := 0
+		for ch in row.text {
+			if ci >= w do break
+			// Draw cell as a colored rectangle
+			// Full block (█) = fg only, space = bg only, others = fg (simplified)
+			color := ch == ' ' ? row.bg : row.fg
+
+			rect := rl.Rectangle{
+				f32(ci * cell_px), f32(ri * cell_px),
+				f32(cell_px), f32(cell_px),
+			}
+			rl.ImageDrawRectangleRec(&img, rect, color)
+			ci += 1
+		}
+	}
+
+	tex := rl.LoadTextureFromImage(img)
+	rl.UnloadImage(img)
+
+	if tex.id == 0 do return {}, false
+
+	// Create a plane mesh and assign the texture
+	aspect := f32(img_w) / f32(img_h)
+	mesh := rl.GenMeshPlane(aspect * 2, 2, 1, 1)
+	model := rl.LoadModelFromMesh(mesh)
+	model.materials[0].maps[rl.MaterialMapIndex.ALBEDO].texture = tex
+
+	return model, true
+}

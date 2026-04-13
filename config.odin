@@ -26,6 +26,10 @@ Config :: struct {
 	bloom_intensity: f32,
 	bloom_threshold: f32,
 
+	// Render scale (0.25-1.0) — 3D scene renders at this fraction of screen res
+	// Grafel grid already downsamples, so lower values are nearly invisible
+	render_scale:    f32,
+
 	// Sky
 	sky_enabled:     bool,
 
@@ -57,7 +61,9 @@ config_default :: proc() -> Config {
 		fog_start       = 40,
 		fog_end         = 120,
 
-		shadow_map_size = 4096,
+		render_scale    = 1.0,
+
+		shadow_map_size = 2048,
 		shadow_radius   = 15,
 
 		bloom_intensity = 0.5,

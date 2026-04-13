@@ -41,8 +41,9 @@ FLARE_GHOSTS :: [10]LensFlareGhost{
 
 // Depth-based occlusion for lens flare
 FlareOcclusion :: struct {
-	occlusion:   f32,   // smoothed 0-1 visibility
-	initialized: bool,
+	occlusion:     f32,   // smoothed 0-1 visibility
+	initialized:   bool,
+	frame_counter: u32,
 }
 
 flare_occlusion_init :: proc(fo: ^FlareOcclusion) {
@@ -66,6 +67,11 @@ flare_occlusion_update :: proc(fo: ^FlareOcclusion, sun_screen: rl.Vector2) {
 	sx := clamp(i32(sun_screen.x), 0, w - 1)
 	sy := clamp(h - 1 - i32(sun_screen.y), 0, h - 1)
 
+	// Skip readback every other frame — halves the GPU stall cost.
+	// Temporal smoothing makes the 2-frame latency invisible.
+	fo.frame_counter += 1
+	if fo.frame_counter % 3 != 0 do return // only read every 3rd frame
+
 	// Flush batch so depth buffer is up to date
 	rlgl.DrawRenderBatchActive()
 
@@ -74,10 +80,9 @@ flare_occlusion_update :: proc(fo: ^FlareOcclusion, sun_screen: rl.Vector2) {
 	glReadPixels(sx, sy, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth)
 
 	// If depth buffer value >= sun's depth, nothing is blocking
-	// (depth buffer has 1.0 where only sky is drawn)
-	target: f32 = depth >= 0.999 ? 1.0 : 0.0  // sky = 1.0 (nothing written), geometry < 1.0
+	target: f32 = depth >= 0.999 ? 1.0 : 0.0
 
-	speed := f32(20.0) * rl.GetFrameTime()
+	speed := f32(8.0) * rl.GetFrameTime() // slower smoothing to hide the skip
 	fo.occlusion += (target - fo.occlusion) * clamp(speed, 0, 1)
 }
 

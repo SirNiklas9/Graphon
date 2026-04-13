@@ -53,6 +53,7 @@ float bayer4x4(vec2 coord) {
     return 5.0/16.0;
 }
 
+
 void main() {
     vec2 pixelPos = fragTexCoord * resolution;
 
@@ -77,12 +78,27 @@ void main() {
 
     if (computeMode == 1) {
         // 3D scene mode: real lighting colors + procedural Graphon characters
-        // Scene texture has correct per-pixel lighting — colors are always real
-        // Characters provide sub-cell detail and the Graphon visual identity
 
-        // FULL_ONLY: solid color blocks — sample at cell center so font size = resolution
+        vec2 cellCenter = (cellCoord + 0.5) / gridSize;
+
+        // Per-object Grafel resolution — distance-compensated block merging
+        // Alpha encodes screen-space block size (already adjusted for depth by lighting shader)
+        float objAlpha = texture(texture0, cellCenter).a;
+        if (objAlpha > 0.05 && objAlpha < 0.95) {
+            // Direct: lower alpha = bigger blocks. 0.1 → 50 cells, 0.5 → 10 cells, 0.9 → 1 cell
+            float bs = max(1.0, floor(5.0 / objAlpha));
+
+            // Snap cell to coarser grid — bigger Grafels
+            vec2 coarseCell = floor(cellCoord / bs) * bs + bs * 0.5;
+            vec2 coarseUV = coarseCell / gridSize;
+            vec3 color = texture(texture0, coarseUV).rgb;
+
+            finalColor = vec4(color, 1.0);
+            return;
+        }
+
+        // FULL_ONLY: solid color blocks
         if (fidelityLevel == 0) {
-            vec2 cellCenter = (cellCoord + 0.5) / gridSize;
             finalColor = vec4(texture(texture0, cellCenter).rgb, 1.0);
             return;
         }
@@ -92,49 +108,50 @@ void main() {
         vec2 cellEnd = (cellCoord + 1.0) / gridSize;
         vec2 qOff = (cellEnd - cellStart) * 0.25;
 
-        // Sample 4 quadrants — real scene colors
+        // Sample 4 quadrants
         vec3 qTL = texture(texture0, cellStart + qOff).rgb;
         vec3 qTR = texture(texture0, vec2(cellEnd.x - qOff.x, cellStart.y + qOff.y)).rgb;
         vec3 qBL = texture(texture0, vec2(cellStart.x + qOff.x, cellEnd.y - qOff.y)).rgb;
         vec3 qBR = texture(texture0, cellEnd - qOff).rgb;
 
-        // Cell average — the real lit color of this cell
+        // Cell average
         fg = (qTL + qTR + qBL + qBR) * 0.25;
         float brightness = dot(fg, vec3(0.299, 0.587, 0.114));
 
-        // Check if cell is smooth (all quadrants similar) or has detail
-        // Smooth areas (sky, flat surfaces): show solid averaged color
-        // Detail areas (geometry edges, shadows): show density characters
+        // Smooth vs detail — adapt threshold to cell size
+        // Small cells (< 6px) need higher threshold to avoid dithering artifacts
         float variance = (length(qTL - fg) + length(qTR - fg) +
                           length(qBL - fg) + length(qBR - fg)) * 0.25;
 
-        if (variance < 0.08) {
-            // Smooth area — solid cell color, no density pattern
+        float minCell = min(cellSize.x, cellSize.y);
+        float adaptiveThreshold = cfgEdgeThreshold;
+        if (minCell < 4.0) adaptiveThreshold = 1.0;       // tiny cells: always solid
+        else if (minCell < 8.0) adaptiveThreshold = 0.5;   // small cells: mostly solid
+        else if (minCell < 12.0) adaptiveThreshold = 0.35;  // medium: slightly more solid
+
+        if (variance < adaptiveThreshold) {
             finalColor = vec4(fg, 1.0);
             return;
         }
 
-        // Detail area — use density characters for Grafel texture
+        // Detail area — density patterns (only reached at larger cell sizes)
         bg = fg * cfgDensityBgFactor;
         vec2 sp = floor(pixelPos);
         float exactCov = clamp(brightness, 0.0, 1.0);
         float pattern;
-        {
-            if (exactCov >= cfgDensityThresholds.x) {
-                pattern = 1.0; // █ solid
-            } else if (exactCov >= cfgDensityThresholds.y) {
-                vec2 p = mod(sp, 2.0); // ▓ 75%
-                pattern = (p.x < 1.0 && p.y < 1.0) ? 0.0 : 1.0;
-            } else if (exactCov >= cfgDensityThresholds.z) {
-                pattern = mod(sp.x + sp.y, 2.0) < 1.0 ? 1.0 : 0.0; // ▒ 50%
-            } else if (exactCov >= cfgDensityThresholds.w) {
-                vec2 p = mod(sp, 2.0); // ░ 25%
-                pattern = (p.x >= 1.0 && p.y >= 1.0) ? 1.0 : 0.0;
-            } else {
-                pattern = 0.0; // below minimum — solid bg
-            }
+        if (exactCov >= cfgDensityThresholds.x) {
+            pattern = 1.0;
+        } else if (exactCov >= cfgDensityThresholds.y) {
+            vec2 p = mod(sp, 2.0);
+            pattern = (p.x < 1.0 && p.y < 1.0) ? 0.0 : 1.0;
+        } else if (exactCov >= cfgDensityThresholds.z) {
+            pattern = mod(sp.x + sp.y, 2.0) < 1.0 ? 1.0 : 0.0;
+        } else if (exactCov >= cfgDensityThresholds.w) {
+            vec2 p = mod(sp, 2.0);
+            pattern = (p.x >= 1.0 && p.y >= 1.0) ? 1.0 : 0.0;
+        } else {
+            pattern = 0.0;
         }
-
         finalColor = vec4(mix(bg, fg, pattern), 1.0);
         return;
     } else {

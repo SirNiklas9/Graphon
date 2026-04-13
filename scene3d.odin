@@ -120,6 +120,8 @@ Scene3D :: struct {
 	sky_use_tex_loc:      i32,
 	sky_rotation_loc:    i32,
 	sky_night_loc:       i32,
+	sky_grafel_res_loc:  i32,
+	sky_grafel_res:      f32, // 1.0 = native, < 1.0 = chunky sky
 	sky_model:           rl.Model,
 	sky_tex:           rl.Texture2D,
 	sky_night_tex:     rl.Texture2D,
@@ -143,12 +145,15 @@ Scene3D :: struct {
 	// Material uniform locations
 	material_specular_loc:  i32,
 	material_roughness_loc: i32,
+	grafel_res_loc:         i32,
+
 }
 
-scene3d_create :: proc(cols, rows: int) -> Scene3D {
-	// Render at full screen resolution — prevents aliasing/moiré on upscale
-	c := int(rl.GetScreenWidth())
-	r := int(rl.GetScreenHeight())
+scene3d_create :: proc(cols, rows: int, render_scale: f32 = 0.5) -> Scene3D {
+	// Render at scaled resolution — Grafel grid downsamples anyway
+	scale := clamp(render_scale, 0.25, 1.0)
+	c := int(f32(rl.GetScreenWidth()) * scale)
+	r := int(f32(rl.GetScreenHeight()) * scale)
 
 	target := rl.LoadRenderTexture(i32(c), i32(r))
 
@@ -178,6 +183,7 @@ scene3d_create :: proc(cols, rows: int) -> Scene3D {
 		fog_enabled_loc        = rl.GetShaderLocation(shader, "fogEnabled"),
 		material_specular_loc  = rl.GetShaderLocation(shader, "materialSpecular"),
 		material_roughness_loc = rl.GetShaderLocation(shader, "materialRoughness"),
+		grafel_res_loc         = rl.GetShaderLocation(shader, "grafelResolution"),
 		shadow                 = shadow_create(),
 	}
 
@@ -213,6 +219,8 @@ scene3d_create :: proc(cols, rows: int) -> Scene3D {
 		s.sky_use_tex_loc = rl.GetShaderLocation(s.sky_shader, "useTexture")
 		s.sky_rotation_loc = rl.GetShaderLocation(s.sky_shader, "skyboxRotation")
 		s.sky_night_loc = rl.GetShaderLocation(s.sky_shader, "nightMode")
+		s.sky_grafel_res_loc = rl.GetShaderLocation(s.sky_shader, "skyGrafelRes")
+		s.sky_grafel_res = 1.0 // native by default
 		s.sky_cubemap_loc = rl.GetShaderLocation(s.sky_shader, "skyboxCube")
 		s.sky_use_cube_loc = rl.GetShaderLocation(s.sky_shader, "useCubemap")
 
@@ -283,7 +291,7 @@ scene3d_destroy :: proc(s: ^Scene3D) {
 	}
 }
 
-scene3d_resize :: proc(s: ^Scene3D, cols, rows: int) {
+scene3d_resize :: proc(s: ^Scene3D, cols, rows: int, render_scale: f32 = 0.5) {
 	// Preserve lights across resize
 	lights := s.lights
 	count := s.light_count
@@ -292,7 +300,7 @@ scene3d_resize :: proc(s: ^Scene3D, cols, rows: int) {
 		if s.shader.id != 0 { rl.UnloadShader(s.shader) }
 	}
 	shadow_destroy(&s.shadow)
-	s^ = scene3d_create(cols, rows)
+	s^ = scene3d_create(cols, rows, render_scale)
 	// Restore lights with new shader locations already cached, copy data back
 	for i in 0 ..< count {
 		s.lights[i].enabled  = lights[i].enabled
@@ -341,13 +349,15 @@ scene3d_update_lights :: proc(s: ^Scene3D) {
 // Draw all scene geometry — shared between shadow pass and color pass
 // use_shader: false for shadow pass (depth only), true for color pass
 // draw_fn: optional callback for custom primitives (ground, cubes, etc.)
-scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, use_shader: bool = true, draw_fn: proc(^Scene3D, bool) = nil, cam: ^Camera = nil) {
+scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, use_shader: bool = true, draw_fn: proc(^Scene3D, bool) = nil, cam: ^Camera = nil, shadow_cull_radius: f32 = 0) {
 	// Default material for primitives drawn via callback
 	if use_shader {
 		default_spec: f32 = 0.3
 		default_rough: f32 = 0.5
+		default_gres: f32 = 1.0
 		rl.SetShaderValue(s.shader, s.material_specular_loc, &default_spec, .FLOAT)
 		rl.SetShaderValue(s.shader, s.material_roughness_loc, &default_rough, .FLOAT)
+		rl.SetShaderValue(s.shader, s.grafel_res_loc, &default_gres, .FLOAT)
 	}
 
 	// Custom draw callback (ground, primitives, etc.)
@@ -359,16 +369,42 @@ scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, u
 	for &obj in models {
 		if !obj.loaded do continue
 
+		// Shadow pass culling — skip objects outside shadow radius
+		if shadow_cull_radius > 0 {
+			dx := obj.position.x
+			dy := obj.position.y
+			dz := obj.position.z
+			dist_sq := dx*dx + dy*dy + dz*dz
+			limit := shadow_cull_radius + obj.bounds_radius * obj.scale
+			if dist_sq > limit * limit { continue }
+		}
+
+		// Camera frustum culling (color pass only)
+		if use_shader && cam != nil && obj.bounds_radius > 0 {
+			to_obj := rl.Vector3{
+				obj.position.x - cam.rl_cam.position.x,
+				obj.position.y - cam.rl_cam.position.y,
+				obj.position.z - cam.rl_cam.position.z,
+			}
+			view_dir := linalg.normalize(cam.rl_cam.target - cam.rl_cam.position)
+			dot := to_obj.x * view_dir.x + to_obj.y * view_dir.y + to_obj.z * view_dir.z
+			r := obj.bounds_radius * obj.scale
+			if dot < -r { continue }
+		}
+
 		if use_shader {
 			for mi in 0 ..< obj.model.materialCount {
 				obj.model.materials[mi].shader = s.shader
 			}
 
-			// Per-object material
+			// Per-object material + Grafel resolution
 			spec := obj.specular
 			rough := obj.roughness
+			gres := obj.grafel_resolution > 0 ? obj.grafel_resolution : f32(1.0)
 			rl.SetShaderValue(s.shader, s.material_specular_loc, &spec, .FLOAT)
 			rl.SetShaderValue(s.shader, s.material_roughness_loc, &rough, .FLOAT)
+			rl.SetShaderValue(s.shader, s.grafel_res_loc, &gres, .FLOAT)
+
 
 			has_nmap := i32(obj.normal_map.id != 0 ? 1 : 0)
 			rl.SetShaderValue(s.shader, s.has_normal_map_loc, &has_nmap, .INT)
@@ -458,10 +494,10 @@ scene3d_render :: proc(
 	}
 	has_shadow := s.shadow.enabled && shadow_light_idx >= 0
 
+	shadow_radius := cfg != nil ? cfg.shadow_radius : f32(15)
 	if has_shadow {
-		shadow_radius := cfg != nil ? cfg.shadow_radius : f32(15)
 		shadow_begin(&s.shadow, &s.lights[shadow_light_idx], {0, 0, 0}, shadow_radius)
-		scene3d_draw_geometry(s, models, time, false, draw_fn, cam) // depth only, no lighting shader
+		scene3d_draw_geometry(s, models, time, false, draw_fn, cam, shadow_radius) // depth only, cull by shadow radius
 		shadow_end(&s.shadow)
 	}
 
@@ -569,6 +605,9 @@ scene3d_render :: proc(
 		night_val := i32(s.sky_night_mode ? 1 : 0)
 		rl.SetShaderValue(s.sky_shader, s.sky_night_loc, &night_val, .INT)
 
+		// Sky Grafel resolution
+		rl.SetShaderValue(s.sky_shader, s.sky_grafel_res_loc, &s.sky_grafel_res, .FLOAT)
+
 		// Cubemap support — bind if available
 		active_cube := s.sky_night_mode && s.sky_night_cubemap.id != 0 ? s.sky_night_cubemap : s.sky_cubemap
 		use_cube := i32(active_cube.id != 0 ? 1 : 0)
@@ -602,7 +641,10 @@ scene3d_render :: proc(
 
 	rl.BeginShaderMode(s.shader)
 
+	// Disable blending for geometry — alpha carries Grafel resolution data
+	rlgl.DisableColorBlend()
 	scene3d_draw_geometry(s, models, time, true, draw_fn, cam)
+	rlgl.EnableColorBlend()
 
 	// Light indicator spheres (drawn after geometry, unaffected by shadow)
 	for i in 0 ..< s.light_count {
@@ -675,5 +717,15 @@ Scene3DObject :: struct {
 	normal_map:   rl.Texture2D, // optional — set .id to 0 if none
 	specular:     f32,
 	roughness:    f32,
-	billboard:    bool, // always face camera
+	billboard:    bool,   // always face camera
+	bounds_radius: f32,   // bounding sphere radius (for culling + picking)
+
+	// Per-object Grafel resolution: 1.0 = native detail, < 1.0 = solid color per cell
+	grafel_resolution: f32,
+
+	// Scene hierarchy: parent index (-1 = root)
+	parent:          int,
+	local_position:  rl.Vector3,
+	local_rotation_y: f32,
+	local_scale:     f32,
 }

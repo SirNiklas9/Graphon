@@ -15,6 +15,12 @@ uniform vec3 ambientColor;
 uniform float materialSpecular;
 uniform float materialRoughness;
 
+// Per-object Grafel resolution — written to alpha, read by gpu_grid.glsl
+// 1.0 = native detail, < 1.0 = reduced (solid color per cell)
+uniform float grafelResolution;
+
+
+
 // Normal mapping
 uniform sampler2D normalMap;
 uniform int hasNormalMap;
@@ -133,17 +139,37 @@ void main() {
             curDepth <= 1.0 && curDepth >= 0.0) {
 
             vec3 l = -normalize(lights[shadowLightIdx].target - lights[shadowLightIdx].position);
-            float bias = max(0.0002 * (1.0 - dot(norm, l)), 0.00002) + 0.00001;
+            float bias = max(0.0005 * (1.0 - dot(norm, l)), 0.00005) + 0.00002;
+
+            // Rotated Poisson disk PCF — per-pixel rotation breaks ALL visible patterns
+            const vec2 poissonDisk[16] = vec2[16](
+                vec2(-0.94201624, -0.39906216), vec2( 0.94558609, -0.76890725),
+                vec2(-0.09418410, -0.92938870), vec2( 0.34495938,  0.29387760),
+                vec2(-0.91588581,  0.45771432), vec2(-0.81544232, -0.87912464),
+                vec2(-0.38277543,  0.27676845), vec2( 0.97484398,  0.75648379),
+                vec2( 0.44323325, -0.97511554), vec2( 0.53742981, -0.47373420),
+                vec2(-0.26496911, -0.41893023), vec2( 0.79197514,  0.19090188),
+                vec2(-0.24188840,  0.99706507), vec2(-0.81409955,  0.91437590),
+                vec2( 0.19984126,  0.78641367), vec2( 0.14383161, -0.14100790)
+            );
+
+            // Per-pixel random rotation angle — makes each pixel sample differently
+            float angle = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2832;
+            float ca = cos(angle);
+            float sa = sin(angle);
 
             float shadow = 0.0;
-            vec2 texelSize = vec2(1.0 / float(shadowMapResolution));
-            for (int x = -3; x <= 3; x++) {
-                for (int y = -3; y <= 3; y++) {
-                    float sampleDepth = texture(shadowMap, sampleCoords + texelSize * vec2(x, y)).r;
-                    if (curDepth - bias > sampleDepth) shadow += 1.0;
-                }
+            float spread = 5.0 / float(shadowMapResolution); // wider spread = softer transition
+            for (int i = 0; i < 16; i++) {
+                // Rotate each Poisson sample by the per-pixel angle
+                vec2 rotated = vec2(
+                    poissonDisk[i].x * ca - poissonDisk[i].y * sa,
+                    poissonDisk[i].x * sa + poissonDisk[i].y * ca
+                );
+                float sampleDepth = texture(shadowMap, sampleCoords + rotated * spread).r;
+                if (curDepth - bias > sampleDepth) shadow += 1.0;
             }
-            shadow /= 49.0; // 7x7 PCF, 4096 shadow map — clean at native resolution
+            shadow /= 16.0;
 
             result = mix(result, vec3(0.0), shadow);
         }
@@ -189,5 +215,8 @@ void main() {
     float noise = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
     result += (noise - 0.5) / 255.0;
 
-    finalColor = vec4(result, 1.0);
+    // Per-object Grafel resolution — direct control, no distance compensation
+    // grafelResolution >= 1.0 = native. Lower = chunkier. Written directly to alpha.
+    float outAlpha = clamp(grafelResolution, 0.10, 1.0);
+    finalColor = vec4(result, outAlpha);
 }

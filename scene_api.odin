@@ -1,8 +1,8 @@
 package main
 
 import rl "vendor:raylib"
+import "core:math"
 
-MAX_SCENE_OBJECTS  :: 256
 MAX_SCENE_LIGHTS   :: 4
 MAX_SCENE_VOLUMES  :: 4
 MAX_SCENE_EMITTERS :: 16
@@ -52,9 +52,8 @@ SceneVolume :: struct {
 
 // Scene — everything that exists in the world
 Scene :: struct {
-	// Objects
-	objects:      [MAX_SCENE_OBJECTS]Scene3DObject,
-	object_count: int,
+	// Objects (dynamic — heap allocated, no limit)
+	objects:      [dynamic]Scene3DObject,
 
 	// Lights
 	lights:      [MAX_SCENE_LIGHTS]SceneLight,
@@ -88,8 +87,7 @@ scene_create :: proc() -> Scene {
 
 // Add a model to the scene. Returns the index.
 scene_add_model :: proc(scene: ^Scene, model: rl.Model, position: rl.Vector3, mat: Material = {}, scale: f32 = 1.0) -> int {
-	if scene.object_count >= MAX_SCENE_OBJECTS do return -1
-	idx := scene.object_count
+	idx := len(scene.objects)
 
 	// Apply diffuse texture to model materials if provided
 	if mat.diffuse_tex.id != 0 {
@@ -98,31 +96,45 @@ scene_add_model :: proc(scene: ^Scene, model: rl.Model, position: rl.Vector3, ma
 		}
 	}
 
-	scene.objects[idx] = Scene3DObject{
-		model        = model,
-		loaded       = model.meshCount > 0,
-		position     = position,
-		scale        = scale,
-		tint         = mat.diffuse_color != {} ? mat.diffuse_color : rl.WHITE,
-		normal_map   = mat.normal_map,
-		specular     = mat.specular,
-		roughness    = mat.roughness,
+	// Compute bounding sphere from first mesh
+	bounds_r: f32 = 2.0
+	if model.meshCount > 0 {
+		bb := rl.GetMeshBoundingBox(model.meshes[0])
+		dx := bb.max.x - bb.min.x
+		dy := bb.max.y - bb.min.y
+		dz := bb.max.z - bb.min.z
+		bounds_r = math.sqrt(dx*dx + dy*dy + dz*dz) * 0.5
 	}
-	scene.object_count += 1
+
+	append(&scene.objects, Scene3DObject{
+		model             = model,
+		loaded            = model.meshCount > 0,
+		position          = position,
+		scale             = scale,
+		tint              = mat.diffuse_color != {} ? mat.diffuse_color : rl.WHITE,
+		normal_map        = mat.normal_map,
+		specular          = mat.specular,
+		roughness         = mat.roughness,
+		bounds_radius     = bounds_r,
+		grafel_resolution = 1.0,
+		parent            = -1,
+		local_scale       = 1.0,
+	})
 	return idx
 }
 
 // Add a primitive cube to the scene
 scene_add_cube :: proc(scene: ^Scene, position: rl.Vector3, size: rl.Vector3, color: rl.Color) -> int {
-	if scene.object_count >= MAX_SCENE_OBJECTS do return -1
-	idx := scene.object_count
-	scene.objects[idx] = Scene3DObject{
-		loaded       = true, // primitive, no model needed
-		position     = position,
-		scale        = 1.0,
-		tint         = color,
-	}
-	scene.object_count += 1
+	idx := len(scene.objects)
+	append(&scene.objects, Scene3DObject{
+		loaded            = true,
+		position          = position,
+		scale             = 1.0,
+		tint              = color,
+		grafel_resolution = 1.0,
+		parent            = -1,
+		local_scale       = 1.0,
+	})
 	return idx
 }
 
@@ -158,12 +170,8 @@ scene_add_volume :: proc(scene: ^Scene, min_pos, max_pos, color: rl.Vector3, den
 
 // Remove an object by index
 scene_remove_object :: proc(scene: ^Scene, idx: int) {
-	if idx < 0 || idx >= scene.object_count do return
-	// Shift remaining objects down
-	for i in idx ..< scene.object_count - 1 {
-		scene.objects[i] = scene.objects[i + 1]
-	}
-	scene.object_count -= 1
+	if idx < 0 || idx >= len(scene.objects) do return
+	ordered_remove(&scene.objects, idx)
 }
 
 // Apply scene data to the Scene3D renderer
@@ -182,4 +190,51 @@ scene3d_apply_scene :: proc(s3d: ^Scene3D, scene: ^Scene) {
 		s3d.volumes[s3d.volume_count] = scene.volumes[i]
 		s3d.volume_count += 1
 	}
+}
+
+// Update scene hierarchy — propagate parent transforms to children.
+// Call before rendering. Objects with parent >= 0 inherit position/rotation/scale.
+scene_update_hierarchy :: proc(scene: ^Scene) {
+	for i in 0 ..< len(scene.objects) {
+		obj := &scene.objects[i]
+		if obj.parent < 0 || obj.parent >= len(scene.objects) do continue
+
+		p := &scene.objects[obj.parent]
+		// Rotate child's local position around parent's Y axis
+		sin_r := math.sin(p.rotation_y)
+		cos_r := math.cos(p.rotation_y)
+		lx := obj.local_position.x
+		lz := obj.local_position.z
+
+		obj.position = {
+			p.position.x + (cos_r * lx - sin_r * lz) * p.scale,
+			p.position.y + obj.local_position.y * p.scale,
+			p.position.z + (sin_r * lx + cos_r * lz) * p.scale,
+		}
+		obj.rotation_y = p.rotation_y + obj.local_rotation_y
+		obj.scale = p.scale * obj.local_scale
+	}
+}
+
+// Pick the closest object under a screen position. Returns index or -1.
+scene_pick :: proc(scene: ^Scene, screen_pos: rl.Vector2, camera: rl.Camera3D) -> int {
+	ray := rl.GetScreenToWorldRay(screen_pos, camera)
+
+	closest_idx := -1
+	closest_dist := max(f32)
+
+	for i in 0 ..< len(scene.objects) {
+		obj := &scene.objects[i]
+		if !obj.loaded do continue
+		r := obj.bounds_radius * obj.scale
+		if r <= 0 do continue
+
+		collision := rl.GetRayCollisionSphere(ray, obj.position, r)
+		if collision.hit && collision.distance < closest_dist {
+			closest_dist = collision.distance
+			closest_idx = i
+		}
+	}
+
+	return closest_idx
 }

@@ -1,0 +1,5 @@
+type: object
+model: ChessSet/ABeautifulGame.gltf
+color: 255,255,255
+specular: 0.5
+roughness: 0.4

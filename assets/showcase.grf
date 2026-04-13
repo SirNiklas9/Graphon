@@ -1,0 +1,17 @@
+type: scene
+
+camera: 0,2,8 target:0,2,0
+
+ambient: 0.25,0.25,0.3
+
+fog: color:0.5,0.55,0.65 start:50 end:120
+
+light: directional 10,15,10 target:0,0,0 color:1.2,1.1,1.0
+
+light: point 0,4,5 color:1.0,0.9,0.8
+light: point 0,4,-5 color:0.6,0.7,1.0
+
+# Three helmets side by side — same distance
+include: damaged_helmet.grf at -4,2,0 scale:1.5
+include: flight_helmet.grf at 0,1,0 scale:5.0
+include: scifi_helmet.grf at 4,2,0 scale:1.5

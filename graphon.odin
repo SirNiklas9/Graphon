@@ -27,7 +27,7 @@ graphon_init :: proc(width, height: i32, font_path: cstring, font_size: i32 = 20
 	grid_init(&g.grid, width, height, g.font, font_size)
 	g.gpu_grid = gpu_grid_create(g.grid.cols, g.grid.rows)
 	g.gpu = gpu_create(width, height)
-	g.scene3d = scene3d_create(g.grid.cols, g.grid.rows)
+	g.scene3d = scene3d_create(g.grid.cols, g.grid.rows, g.config.render_scale)
 
 	return g
 }
@@ -47,7 +47,20 @@ graphon_resize_font :: proc(g: ^Graphon, new_size: i32) {
 	g.font_size = size
 	grid_resize(&g.grid, g.width, g.height, g.font, size)
 	gpu_grid_resize(&g.gpu_grid, g.grid.cols, g.grid.rows)
-	scene3d_resize(&g.scene3d, g.grid.cols, g.grid.rows)
+
+	// Adaptive render scale — full res at small cells, half res at large cells
+	cell := min(g.grid.cell_w, g.grid.cell_h)
+	if cell >= 10 {
+		g.config.render_scale = 0.5   // large cells hide downsampling
+	} else if cell >= 6 {
+		g.config.render_scale = 0.75  // medium cells
+	} else {
+		g.config.render_scale = 1.0   // small cells need full res
+	}
+
+	scene3d_resize(&g.scene3d, g.grid.cols, g.grid.rows, g.config.render_scale)
+	gpu_destroy(&g.gpu)
+	g.gpu = gpu_create(g.width, g.height)
 }
 
 // Render a 3D scene through the Graphon pipeline
@@ -66,9 +79,9 @@ graphon_render_scene :: proc(g: ^Graphon, scene: ^Scene, time: f32, draw_fn: pro
 	}
 
 	// Render 3D scene
-	scene3d_render(&g.scene3d, &scene.camera, scene.objects[:scene.object_count], time, draw_fn, &g.config, particles)
+	scene3d_render(&g.scene3d, &scene.camera, scene.objects[:], time, draw_fn, &g.config, particles)
 
-	// Get output texture (with SSAO if enabled)
+	// Get output texture
 	output := scene3d_get_output(&g.scene3d)
 
 	// Display through Graphon grid

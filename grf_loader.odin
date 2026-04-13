@@ -73,8 +73,13 @@ grf_load_scene :: proc(path: string) -> (GrfLoadedScene, bool) {
 		scene_add_model(&loaded.scene, model, {0, 0, 0}, material_create(rl.WHITE), 1.0)
 
 	case GrfGrafel:
-		// 2D grafel — TODO: render to texture and display as billboard
-		rl.TraceLog(.INFO, "Grafel type loaded but not yet renderable as 3D")
+		// 2D grafel → render to texture → billboard in 3D
+		model, ok_g := grafel_to_billboard(&d)
+		if ok_g {
+			append(&loaded.models, model)
+			scene_add_model(&loaded.scene, model, {0, 0, 0}, material_create(rl.WHITE), 1.0)
+			loaded.scene.objects[len(loaded.scene.objects) - 1].billboard = true
+		}
 	}
 
 	return loaded, true
@@ -113,8 +118,15 @@ grf_load_include :: proc(loaded: ^GrfLoadedScene, path: string, pos: rl.Vector3,
 		scene_add_model(&loaded.scene, model, pos, material_create(rl.WHITE), scale)
 
 	case GrfGrafel:
-		// TODO: render grafel to texture, create billboard
-		rl.TraceLog(.INFO, "Grafel include not yet supported as 3D: %s", strings.clone_to_cstring(path))
+		model, ok_g := grafel_to_billboard(&d)
+		if ok_g {
+			append(&loaded.models, model)
+			mat := material_create(rl.WHITE, 0.0, 1.0)
+			idx := scene_add_model(&loaded.scene, model, pos, mat, scale)
+			if idx >= 0 {
+				loaded.scene.objects[idx].billboard = true
+			}
+		}
 
 	case GrfScene:
 		// Sub-scene — flatten into parent with position offset

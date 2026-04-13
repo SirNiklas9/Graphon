@@ -85,7 +85,7 @@ data_input_handle :: proc(scene: ^Scene, line: string) {
 		y, ok3 := strconv.parse_f64(parts[3])
 		z, ok4 := strconv.parse_f64(parts[4])
 		if !ok1 || !ok2 || !ok3 || !ok4 do return
-		if idx >= 0 && idx < scene.object_count {
+		if idx >= 0 && idx < len(scene.objects) {
 			scene.objects[idx].position = {f32(x), f32(y), f32(z)}
 		}
 
@@ -95,7 +95,7 @@ data_input_handle :: proc(scene: ^Scene, line: string) {
 		idx, ok1 := strconv.parse_int(parts[1])
 		deg, ok2 := strconv.parse_f64(parts[2])
 		if !ok1 || !ok2 do return
-		if idx >= 0 && idx < scene.object_count {
+		if idx >= 0 && idx < len(scene.objects) {
 			scene.objects[idx].rotation_y = f32(deg) * 0.0174533 // degrees to radians
 		}
 

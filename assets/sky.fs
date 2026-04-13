@@ -13,6 +13,7 @@ uniform int useTexture;        // 1 = sample panorama, 0 = procedural
 uniform int useCubemap;        // 1 = sample cubemap, 0 = no cubemap
 uniform float skyboxRotation;  // unused
 uniform int nightMode;         // 1 = night (moon), 0 = day (sun)
+uniform float skyGrafelRes;    // per-sky Grafel resolution (1.0 = native, <1.0 = chunky)
 
 out vec4 finalColor;
 
@@ -39,7 +40,7 @@ void main() {
             vec3 moonCol = vec3(0.9, 0.92, 1.0);
             sky += moonCol * (pow(lightDot, 1200.0) * 3.0 + pow(lightDot, 80.0) * 0.15);
         }
-        finalColor = vec4(sky, 0.0);  // alpha=0 marks sky for bloom exclusion
+        finalColor = vec4(sky, skyGrafelRes < 0.99 ? clamp(skyGrafelRes, 0.10, 0.80) : 0.0);
         return;
     }
 
@@ -69,7 +70,7 @@ void main() {
             sky += moonCol * (disc + glow);
         }
 
-        finalColor = vec4(sky, 0.0);  // alpha=0 marks sky for bloom exclusion
+        finalColor = vec4(sky, skyGrafelRes < 0.99 ? clamp(skyGrafelRes, 0.10, 0.80) : 0.0);
         return;
     }
 
@@ -113,5 +114,5 @@ void main() {
         skyColor += moonCol * (disc + glow);
     }
 
-    finalColor = vec4(skyColor, 0.0);  // alpha=0 marks sky for bloom exclusion
+    finalColor = vec4(skyColor, skyGrafelRes < 0.99 ? clamp(skyGrafelRes, 0.10, 0.80) : 0.0);
 }

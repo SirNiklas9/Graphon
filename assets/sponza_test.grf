@@ -1,0 +1,14 @@
+type: scene
+
+camera: 0,5,0 target:10,5,0
+
+ambient: 0.12,0.12,0.15
+
+fog: color:0.6,0.65,0.75 start:40 end:100
+
+light: directional 15,20,5 target:0,0,0 color:1.0,0.95,0.85
+
+light: point -5,6,0 color:0.8,0.6,0.3
+light: point 5,6,0 color:0.3,0.5,0.8
+
+include: sponza.grf at 0,0,0 scale:1.0
