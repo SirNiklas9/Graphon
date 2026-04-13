@@ -82,17 +82,12 @@ void main() {
         vec2 cellCenter = (cellCoord + 0.5) / gridSize;
 
         // Per-object Grafel resolution — distance-compensated block merging
-        // Alpha encodes screen-space block size (already adjusted for depth by lighting shader)
         float objAlpha = texture(texture0, cellCenter).a;
         if (objAlpha > 0.05 && objAlpha < 0.95) {
-            // Direct: lower alpha = bigger blocks. 0.1 → 50 cells, 0.5 → 10 cells, 0.9 → 1 cell
             float bs = max(1.0, floor(5.0 / objAlpha));
-
-            // Snap cell to coarser grid — bigger Grafels
             vec2 coarseCell = floor(cellCoord / bs) * bs + bs * 0.5;
             vec2 coarseUV = coarseCell / gridSize;
             vec3 color = texture(texture0, coarseUV).rgb;
-
             finalColor = vec4(color, 1.0);
             return;
         }
@@ -114,27 +109,113 @@ void main() {
         vec3 qBL = texture(texture0, vec2(cellStart.x + qOff.x, cellEnd.y - qOff.y)).rgb;
         vec3 qBR = texture(texture0, cellEnd - qOff).rgb;
 
-        // Cell average
+        // Cell average and per-quadrant brightness
         fg = (qTL + qTR + qBL + qBR) * 0.25;
         float brightness = dot(fg, vec3(0.299, 0.587, 0.114));
+        float bTL = dot(qTL, vec3(0.299, 0.587, 0.114));
+        float bTR = dot(qTR, vec3(0.299, 0.587, 0.114));
+        float bBL = dot(qBL, vec3(0.299, 0.587, 0.114));
+        float bBR = dot(qBR, vec3(0.299, 0.587, 0.114));
 
-        // Smooth vs detail — adapt threshold to cell size
-        // Small cells (< 6px) need higher threshold to avoid dithering artifacts
+        // Variance — how much detail is in this cell
         float variance = (length(qTL - fg) + length(qTR - fg) +
                           length(qBL - fg) + length(qBR - fg)) * 0.25;
 
         float minCell = min(cellSize.x, cellSize.y);
         float adaptiveThreshold = cfgEdgeThreshold;
-        if (minCell < 4.0) adaptiveThreshold = 1.0;       // tiny cells: always solid
-        else if (minCell < 8.0) adaptiveThreshold = 0.5;   // small cells: mostly solid
-        else if (minCell < 12.0) adaptiveThreshold = 0.35;  // medium: slightly more solid
+        if (minCell < 4.0) adaptiveThreshold = 1.0;
+        else if (minCell < 8.0) adaptiveThreshold = 0.5;
+        else if (minCell < 12.0) adaptiveThreshold = 0.35;
 
         if (variance < adaptiveThreshold) {
             finalColor = vec4(fg, 1.0);
             return;
         }
 
-        // Detail area — density patterns (only reached at larger cell sizes)
+        // --- Character selection: pick the best block element for the detail ---
+        // Compute directional splits
+        float bTop    = (bTL + bTR) * 0.5;
+        float bBottom = (bBL + bBR) * 0.5;
+        float bLeft   = (bTL + bBL) * 0.5;
+        float bRight  = (bTR + bBR) * 0.5;
+
+        float splitH = abs(bTop - bBottom);    // horizontal edge strength
+        float splitV = abs(bLeft - bRight);    // vertical edge strength
+
+        // Find which quadrant is most different from the average
+        float dTL = abs(bTL - brightness);
+        float dTR = abs(bTR - brightness);
+        float dBL = abs(bBL - brightness);
+        float dBR = abs(bBR - brightness);
+        float maxQuadDiff = max(max(dTL, dTR), max(dBL, dBR));
+
+        float edgeMin = 0.08; // minimum contrast to use shaped blocks
+
+        // Half blocks (fidelityLevel >= 2) and quarter blocks (fidelityLevel >= 4)
+        if (fidelityLevel >= 2 && (splitH > edgeMin || splitV > edgeMin)) {
+            if (splitH > splitV && splitH > edgeMin) {
+                // Horizontal split — ▀ or ▄
+                vec3 brightHalf = bTop > bBottom ? (qTL + qTR) * 0.5 : (qBL + qBR) * 0.5;
+                vec3 darkHalf   = bTop > bBottom ? (qBL + qBR) * 0.5 : (qTL + qTR) * 0.5;
+                bool topBright  = bTop > bBottom;
+                float pattern;
+                if (topBright) {
+                    pattern = localPos.y < 0.5 ? 1.0 : 0.0; // ▀
+                } else {
+                    pattern = localPos.y >= 0.5 ? 1.0 : 0.0; // ▄
+                }
+                finalColor = vec4(mix(darkHalf, brightHalf, pattern), 1.0);
+                return;
+            } else if (splitV > edgeMin) {
+                // Vertical split — ▌ or ▐
+                vec3 brightHalf = bLeft > bRight ? (qTL + qBL) * 0.5 : (qTR + qBR) * 0.5;
+                vec3 darkHalf   = bLeft > bRight ? (qTR + qBR) * 0.5 : (qTL + qBL) * 0.5;
+                bool leftBright = bLeft > bRight;
+                float pattern;
+                if (leftBright) {
+                    pattern = localPos.x < 0.5 ? 1.0 : 0.0; // ▌
+                } else {
+                    pattern = localPos.x >= 0.5 ? 1.0 : 0.0; // ▐
+                }
+                finalColor = vec4(mix(darkHalf, brightHalf, pattern), 1.0);
+                return;
+            }
+        }
+
+        // Quarter blocks (fidelityLevel >= 4) — one quadrant stands out
+        if (fidelityLevel >= 4 && maxQuadDiff > edgeMin * 1.5) {
+            // Find which quadrant(s) are bright vs dark
+            float thresh = brightness;
+            bool tlB = bTL > thresh;
+            bool trB = bTR > thresh;
+            bool blB = bBL > thresh;
+            bool brB = bBR > thresh;
+
+            // Map quadrant pattern to the right block character
+            vec3 bright = vec3(0.0);
+            vec3 dark = vec3(0.0);
+            int brightCount = 0;
+            if (tlB) { bright += qTL; brightCount++; } else { dark += qTL; }
+            if (trB) { bright += qTR; brightCount++; } else { dark += qTR; }
+            if (blB) { bright += qBL; brightCount++; } else { dark += qBL; }
+            if (brB) { bright += qBR; brightCount++; } else { dark += qBR; }
+
+            int darkCount = 4 - brightCount;
+            if (brightCount > 0) bright /= float(brightCount);
+            if (darkCount > 0) dark /= float(darkCount);
+
+            // Determine which pixel is in a "bright" quadrant
+            bool inTL = localPos.x < 0.5 && localPos.y < 0.5;
+            bool inTR = localPos.x >= 0.5 && localPos.y < 0.5;
+            bool inBL = localPos.x < 0.5 && localPos.y >= 0.5;
+            bool inBR = localPos.x >= 0.5 && localPos.y >= 0.5;
+
+            bool inBright = (inTL && tlB) || (inTR && trB) || (inBL && blB) || (inBR && brB);
+            finalColor = vec4(inBright ? bright : dark, 1.0);
+            return;
+        }
+
+        // Fallback: density patterns (█▓▒░) for gradual brightness
         bg = fg * cfgDensityBgFactor;
         vec2 sp = floor(pixelPos);
         float exactCov = clamp(brightness, 0.0, 1.0);

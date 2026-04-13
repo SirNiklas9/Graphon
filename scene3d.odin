@@ -147,6 +147,24 @@ Scene3D :: struct {
 	material_roughness_loc: i32,
 	grafel_res_loc:         i32,
 
+	// Instanced rendering shader (same fragment, different vertex shader)
+	instanced_shader: rl.Shader,
+	inst_ambient_loc:          i32,
+	inst_view_pos_loc:         i32,
+	inst_shadow_enabled_loc:   i32,
+	inst_shadow_light_idx_loc: i32,
+	inst_shadow_map_res_loc:   i32,
+	inst_has_normal_map_loc:   i32,
+	inst_normal_map_loc:       i32,
+	inst_fog_color_loc:        i32,
+	inst_fog_start_loc:        i32,
+	inst_fog_end_loc:          i32,
+	inst_fog_enabled_loc:      i32,
+	inst_specular_loc:         i32,
+	inst_roughness_loc:        i32,
+	inst_grafel_res_loc:       i32,
+	inst_volume_locs:          [4][5]i32,
+	inst_lights:               [MAX_LIGHTS]Light,
 }
 
 scene3d_create :: proc(cols, rows: int, render_scale: f32 = 0.5) -> Scene3D {
@@ -207,6 +225,56 @@ scene3d_create :: proc(cols, rows: int, render_scale: f32 = 0.5) -> Scene3D {
 		s.lights[i].position_loc = rl.GetShaderLocation(shader, rl.TextFormat("lights[%d].position", idx))
 		s.lights[i].target_loc   = rl.GetShaderLocation(shader, rl.TextFormat("lights[%d].target", idx))
 		s.lights[i].color_loc    = rl.GetShaderLocation(shader, rl.TextFormat("lights[%d].color", idx))
+	}
+
+	// --- Instanced rendering shader (same fragment shader, instanced vertex shader) ---
+	inst := rl.LoadShader("assets/lighting_instanced.vs", "assets/lighting.fs")
+	if inst.id != 0 {
+		// matModel is a vertex ATTRIBUTE at location 6, not a uniform
+		inst.locs[rl.ShaderLocationIndex.MATRIX_MODEL] = 6
+		// matView and matProjection are uniforms — Raylib uploads these in DrawMeshInstanced
+		inst.locs[rl.ShaderLocationIndex.MATRIX_VIEW] = rl.GetShaderLocation(inst, "matView")
+		inst.locs[rl.ShaderLocationIndex.MATRIX_PROJECTION] = rl.GetShaderLocation(inst, "matProjection")
+
+		s.instanced_shader = inst
+		s.inst_ambient_loc = rl.GetShaderLocation(inst, "ambientColor")
+		s.inst_view_pos_loc = rl.GetShaderLocation(inst, "viewPos")
+		s.inst_shadow_enabled_loc = rl.GetShaderLocation(inst, "shadowEnabled")
+		s.inst_shadow_light_idx_loc = rl.GetShaderLocation(inst, "shadowLightIdx")
+		s.inst_shadow_map_res_loc = rl.GetShaderLocation(inst, "shadowMapResolution")
+		s.inst_has_normal_map_loc = rl.GetShaderLocation(inst, "hasNormalMap")
+		s.inst_normal_map_loc = rl.GetShaderLocation(inst, "normalMap")
+		s.inst_fog_color_loc = rl.GetShaderLocation(inst, "fogColor")
+		s.inst_fog_start_loc = rl.GetShaderLocation(inst, "fogStart")
+		s.inst_fog_end_loc = rl.GetShaderLocation(inst, "fogEnd")
+		s.inst_fog_enabled_loc = rl.GetShaderLocation(inst, "fogEnabled")
+		s.inst_specular_loc = rl.GetShaderLocation(inst, "materialSpecular")
+		s.inst_roughness_loc = rl.GetShaderLocation(inst, "materialRoughness")
+		s.inst_grafel_res_loc = rl.GetShaderLocation(inst, "grafelResolution")
+
+		// Cache volume uniform locations for instanced shader
+		for i in 0 ..< 4 {
+			idx := i32(i)
+			s.inst_volume_locs[i][0] = rl.GetShaderLocation(inst, rl.TextFormat("volumes[%d].minPos", idx))
+			s.inst_volume_locs[i][1] = rl.GetShaderLocation(inst, rl.TextFormat("volumes[%d].maxPos", idx))
+			s.inst_volume_locs[i][2] = rl.GetShaderLocation(inst, rl.TextFormat("volumes[%d].color", idx))
+			s.inst_volume_locs[i][3] = rl.GetShaderLocation(inst, rl.TextFormat("volumes[%d].density", idx))
+			s.inst_volume_locs[i][4] = rl.GetShaderLocation(inst, rl.TextFormat("volumes[%d].enabled", idx))
+		}
+
+		// Cache per-light uniform locations for instanced shader
+		for i in 0 ..< MAX_LIGHTS {
+			idx := i32(i)
+			s.inst_lights[i].enabled_loc  = rl.GetShaderLocation(inst, rl.TextFormat("lights[%d].enabled", idx))
+			s.inst_lights[i].type_loc     = rl.GetShaderLocation(inst, rl.TextFormat("lights[%d].type", idx))
+			s.inst_lights[i].position_loc = rl.GetShaderLocation(inst, rl.TextFormat("lights[%d].position", idx))
+			s.inst_lights[i].target_loc   = rl.GetShaderLocation(inst, rl.TextFormat("lights[%d].target", idx))
+			s.inst_lights[i].color_loc    = rl.GetShaderLocation(inst, rl.TextFormat("lights[%d].color", idx))
+		}
+
+		rl.TraceLog(.INFO, "Instanced rendering shader loaded")
+	} else {
+		rl.TraceLog(.WARNING, "Failed to load instanced shader — falling back to batched draws")
 	}
 
 	// Sky shader + high-poly sphere
@@ -278,6 +346,7 @@ scene3d_destroy :: proc(s: ^Scene3D) {
 	if s.enabled {
 		rl.UnloadRenderTexture(s.target)
 		if s.shader.id != 0 { rl.UnloadShader(s.shader) }
+		if s.instanced_shader.id != 0 { rl.UnloadShader(s.instanced_shader) }
 	}
 	shadow_destroy(&s.shadow)
 	flare_occlusion_destroy(&s.flare_occlusion)
@@ -346,10 +415,69 @@ scene3d_update_lights :: proc(s: ^Scene3D) {
 	}
 }
 
+// Frustum — 6 planes extracted from the view-projection matrix (Gribb/Hartmann method)
+Frustum :: struct {
+	planes: [6][4]f32, // [left, right, bottom, top, near, far] each = (a, b, c, d)
+}
+
+// Extract frustum planes from a camera. Call after BeginMode3D sets up matrices.
+frustum_from_matrices :: proc() -> Frustum {
+	proj := rlgl.GetMatrixProjection()
+	view := rlgl.GetMatrixModelview()
+	// VP = proj * view — Odin Raylib Matrix is #row_major matrix[4,4]f32
+	// Indexed as vp[row, col]
+	vp := linalg.matrix_mul(proj, view)
+
+	f: Frustum
+	// Gribb/Hartmann: for row-major M[row,col], plane = row3 +/- rowN
+	// Left:   row3 + row0
+	f.planes[0] = {vp[3,0]+vp[0,0], vp[3,1]+vp[0,1], vp[3,2]+vp[0,2], vp[3,3]+vp[0,3]}
+	// Right:  row3 - row0
+	f.planes[1] = {vp[3,0]-vp[0,0], vp[3,1]-vp[0,1], vp[3,2]-vp[0,2], vp[3,3]-vp[0,3]}
+	// Bottom: row3 + row1
+	f.planes[2] = {vp[3,0]+vp[1,0], vp[3,1]+vp[1,1], vp[3,2]+vp[1,2], vp[3,3]+vp[1,3]}
+	// Top:    row3 - row1
+	f.planes[3] = {vp[3,0]-vp[1,0], vp[3,1]-vp[1,1], vp[3,2]-vp[1,2], vp[3,3]-vp[1,3]}
+	// Near:   row3 + row2
+	f.planes[4] = {vp[3,0]+vp[2,0], vp[3,1]+vp[2,1], vp[3,2]+vp[2,2], vp[3,3]+vp[2,3]}
+	// Far:    row3 - row2
+	f.planes[5] = {vp[3,0]-vp[2,0], vp[3,1]-vp[2,1], vp[3,2]-vp[2,2], vp[3,3]-vp[2,3]}
+
+	// Normalize each plane
+	for i in 0 ..< 6 {
+		len := math.sqrt(f.planes[i][0]*f.planes[i][0] + f.planes[i][1]*f.planes[i][1] + f.planes[i][2]*f.planes[i][2])
+		if len > 0.0001 {
+			f.planes[i][0] /= len
+			f.planes[i][1] /= len
+			f.planes[i][2] /= len
+			f.planes[i][3] /= len
+		}
+	}
+	return f
+}
+
+// Test a bounding sphere against the frustum. Returns true if visible (inside or intersecting).
+frustum_test_sphere :: proc(f: ^Frustum, center: rl.Vector3, radius: f32) -> bool {
+	for i in 0 ..< 6 {
+		dist := f.planes[i][0]*center.x + f.planes[i][1]*center.y + f.planes[i][2]*center.z + f.planes[i][3]
+		if dist < -radius { return false }
+	}
+	return true
+}
+
+// Key for grouping instanceable objects — same mesh + material = one instanced draw call
+InstanceKey :: struct {
+	mesh_id:    u32,        // mesh VAO id (unique per mesh geometry)
+	specular:   f32,
+	roughness:  f32,
+	grafel_res: f32,
+	tint:       rl.Color,
+}
+
 // Draw all scene geometry — shared between shadow pass and color pass
 // use_shader: false for shadow pass (depth only), true for color pass
 // draw_fn: optional callback for custom primitives (ground, cubes, etc.)
-scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, use_shader: bool = true, draw_fn: proc(^Scene3D, bool) = nil, cam: ^Camera = nil, shadow_cull_radius: f32 = 0) {
+scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, use_shader: bool = true, draw_fn: proc(^Scene3D, bool) = nil, cam: ^Camera = nil, shadow_cull_radius: f32 = 0, frustum: ^Frustum = nil) {
 	// Default material for primitives drawn via callback
 	if use_shader {
 		default_spec: f32 = 0.3
@@ -365,8 +493,19 @@ scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, u
 		draw_fn(s, use_shader)
 	}
 
-	// Scene objects (models)
-	for &obj in models {
+	// --- Collect visible objects, split into material-batched groups vs individual draws ---
+	// Material batches: keyed by mesh+material, value = list of object indices
+	material_batches: map[InstanceKey][dynamic]int
+	defer {
+		for _, &batch in material_batches { delete(batch) }
+		delete(material_batches)
+	}
+	// Objects that need individual draw setup (billboard, normal map, auto-rotate)
+	individual: [dynamic]int
+	defer delete(individual)
+
+	for i in 0 ..< len(models) {
+		obj := &models[i]
 		if !obj.loaded do continue
 
 		// Shadow pass culling — skip objects outside shadow radius
@@ -379,32 +518,129 @@ scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, u
 			if dist_sq > limit * limit { continue }
 		}
 
-		// Camera frustum culling (color pass only)
-		if use_shader && cam != nil && obj.bounds_radius > 0 {
-			to_obj := rl.Vector3{
-				obj.position.x - cam.rl_cam.position.x,
-				obj.position.y - cam.rl_cam.position.y,
-				obj.position.z - cam.rl_cam.position.z,
-			}
-			view_dir := linalg.normalize(cam.rl_cam.target - cam.rl_cam.position)
-			dot := to_obj.x * view_dir.x + to_obj.y * view_dir.y + to_obj.z * view_dir.z
+		// Frustum culling — test bounding sphere against all 6 planes
+		if frustum != nil && obj.bounds_radius > 0 {
 			r := obj.bounds_radius * obj.scale
-			if dot < -r { continue }
+			if !frustum_test_sphere(frustum, obj.position, r) { continue }
 		}
+
+		// Can this object be batched? (same uniforms for the whole group)
+		can_batch := obj.model.meshCount > 0 && !obj.billboard && obj.normal_map.id == 0 && !obj.auto_rotate
+
+		if can_batch {
+			gres := obj.grafel_resolution > 0 ? obj.grafel_resolution : f32(1.0)
+			key := InstanceKey{
+				mesh_id    = obj.model.meshes[0].vaoId,
+				specular   = obj.specular,
+				roughness  = obj.roughness,
+				grafel_res = gres,
+				tint       = obj.tint,
+			}
+			if key not_in material_batches {
+				material_batches[key] = make([dynamic]int)
+			}
+			append(&material_batches[key], i)
+		} else {
+			append(&individual, i)
+		}
+	}
+
+	// --- Draw material-batched groups ---
+	// If instanced shader is available and we're in color pass, use true GPU instancing
+	use_instancing := use_shader && s.instanced_shader.id != 0
+
+	for key, &batch in material_batches {
+		if len(batch) == 0 do continue
+
+		first := &models[batch[0]]
+
+		if use_instancing && len(batch) > 1 {
+			// --- TRUE GPU INSTANCED RENDERING ---
+			// Build transform matrices for all objects in this batch
+			transforms: [dynamic]rl.Matrix
+			defer delete(transforms)
+			reserve(&transforms, len(batch))
+
+			for idx in batch {
+				obj := &models[idx]
+				c := math.cos(obj.rotation_y)
+				sn := math.sin(obj.rotation_y)
+				sc := obj.scale
+				// TRS matrix (row-major): T * R_y * S
+				append(&transforms, rl.Matrix{
+					c*sc,  0,    sn*sc, obj.position.x,
+					0,     sc,   0,     obj.position.y,
+					-sn*sc, 0,   c*sc,  obj.position.z,
+					0,     0,    0,     1,
+				})
+			}
+
+			// Set material on the model
+			for mi in 0 ..< first.model.materialCount {
+				first.model.materials[mi].shader = s.instanced_shader
+			}
+
+			// Upload per-batch uniforms to instanced shader
+			spec := key.specular
+			rough := key.roughness
+			gres := key.grafel_res
+			rl.SetShaderValue(s.instanced_shader, s.inst_specular_loc, &spec, .FLOAT)
+			rl.SetShaderValue(s.instanced_shader, s.inst_roughness_loc, &rough, .FLOAT)
+			rl.SetShaderValue(s.instanced_shader, s.inst_grafel_res_loc, &gres, .FLOAT)
+			no_nmap: i32 = 0
+			rl.SetShaderValue(s.instanced_shader, s.inst_has_normal_map_loc, &no_nmap, .INT)
+
+			// Set material tint
+			first.model.materials[0].maps[rl.MaterialMapIndex.ALBEDO].color = key.tint
+
+			// Draw all instances in ONE call
+			rl.DrawMeshInstanced(first.model.meshes[0], first.model.materials[0], raw_data(transforms[:]), i32(len(transforms)))
+		} else {
+			// --- Fallback: batched individual draws (single objects or shadow pass) ---
+			if use_shader {
+				for mi in 0 ..< first.model.materialCount {
+					first.model.materials[mi].shader = s.shader
+				}
+
+				spec := key.specular
+				rough := key.roughness
+				gres := key.grafel_res
+				rl.SetShaderValue(s.shader, s.material_specular_loc, &spec, .FLOAT)
+				rl.SetShaderValue(s.shader, s.material_roughness_loc, &rough, .FLOAT)
+				rl.SetShaderValue(s.shader, s.grafel_res_loc, &gres, .FLOAT)
+				no_nmap: i32 = 0
+				rl.SetShaderValue(s.shader, s.has_normal_map_loc, &no_nmap, .INT)
+			}
+
+			for idx in batch {
+				obj := &models[idx]
+				rl.DrawModelEx(
+					obj.model,
+					obj.position,
+					{0, 1, 0},
+					obj.rotation_y * 57.2958,
+					{obj.scale, obj.scale, obj.scale},
+					key.tint,
+				)
+			}
+		}
+	}
+
+	// --- Draw individual objects (billboard, normal maps, auto-rotate) ---
+	for idx in individual {
+		obj := &models[idx]
 
 		if use_shader {
 			for mi in 0 ..< obj.model.materialCount {
 				obj.model.materials[mi].shader = s.shader
 			}
 
-			// Per-object material + Grafel resolution
 			spec := obj.specular
 			rough := obj.roughness
 			gres := obj.grafel_resolution > 0 ? obj.grafel_resolution : f32(1.0)
 			rl.SetShaderValue(s.shader, s.material_specular_loc, &spec, .FLOAT)
 			rl.SetShaderValue(s.shader, s.material_roughness_loc, &rough, .FLOAT)
 			rl.SetShaderValue(s.shader, s.grafel_res_loc, &gres, .FLOAT)
-
 
 			has_nmap := i32(obj.normal_map.id != 0 ? 1 : 0)
 			rl.SetShaderValue(s.shader, s.has_normal_map_loc, &has_nmap, .INT)
@@ -423,17 +659,13 @@ scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, u
 		}
 
 		if obj.billboard && cam != nil {
-			// Look-at camera POSITION — plane normal (Y+) points at camera
 			dir := linalg.normalize(rl.Vector3{
 				cam.rl_cam.position.x - pos.x,
 				cam.rl_cam.position.y - pos.y,
 				cam.rl_cam.position.z - pos.z,
 			})
-
-			// Flip — plane face should point AT camera, not away
 			dir = -dir
 
-			// Build orthonormal basis: Y→dir, X→right, Z→up
 			world_up := rl.Vector3{0, 1, 0}
 			right: rl.Vector3
 			if math.abs(dir.y) > 0.999 {
@@ -443,7 +675,6 @@ scene3d_draw_geometry :: proc(s: ^Scene3D, models: []Scene3DObject, time: f32, u
 			}
 			up := linalg.cross(dir, right)
 
-			// Columns: X=right, Y=dir(normal), Z=up
 			obj.model.transform = rl.Matrix{
 				right.x, dir.x, up.x, 0,
 				right.y, dir.y, up.y, 0,
@@ -566,18 +797,75 @@ scene3d_render :: proc(
 		scene3d_update_lights(s)
 	}
 
-	// Bind shadow map
+	// --- Mirror all global uniforms to instanced shader ---
+	if s.instanced_shader.id != 0 {
+		rl.SetShaderValue(s.instanced_shader, s.inst_ambient_loc, &ambient, .VEC3)
+		rl.SetShaderValue(s.instanced_shader, s.inst_view_pos_loc, &view_pos, .VEC3)
+		rl.SetShaderValue(s.instanced_shader, s.inst_fog_color_loc, &fog_color, .VEC3)
+		rl.SetShaderValue(s.instanced_shader, s.inst_fog_start_loc, &fog_start, .FLOAT)
+		rl.SetShaderValue(s.instanced_shader, s.inst_fog_end_loc, &fog_end, .FLOAT)
+		rl.SetShaderValue(s.instanced_shader, s.inst_fog_enabled_loc, &fog_enabled, .INT)
+
+		// Volumes
+		for i in 0 ..< 4 {
+			if i < s.volume_count && s.volumes[i].enabled {
+				min_p := [3]f32{s.volumes[i].min_pos.x, s.volumes[i].min_pos.y, s.volumes[i].min_pos.z}
+				max_p := [3]f32{s.volumes[i].max_pos.x, s.volumes[i].max_pos.y, s.volumes[i].max_pos.z}
+				col := [3]f32{s.volumes[i].color.x, s.volumes[i].color.y, s.volumes[i].color.z}
+				dens := s.volumes[i].density
+				en: i32 = 1
+				rl.SetShaderValue(s.instanced_shader, s.inst_volume_locs[i][0], &min_p, .VEC3)
+				rl.SetShaderValue(s.instanced_shader, s.inst_volume_locs[i][1], &max_p, .VEC3)
+				rl.SetShaderValue(s.instanced_shader, s.inst_volume_locs[i][2], &col, .VEC3)
+				rl.SetShaderValue(s.instanced_shader, s.inst_volume_locs[i][3], &dens, .FLOAT)
+				rl.SetShaderValue(s.instanced_shader, s.inst_volume_locs[i][4], &en, .INT)
+			} else {
+				disabled: i32 = 0
+				rl.SetShaderValue(s.instanced_shader, s.inst_volume_locs[i][4], &disabled, .INT)
+			}
+		}
+
+		// Lights — upload to instanced shader using inst_lights locations
+		for i in 0 ..< MAX_LIGHTS {
+			light := &s.lights[i]
+			inst_light := &s.inst_lights[i]
+			enabled := i32(light.enabled ? 1 : 0)
+			type_val := i32(light.type)
+			light_color := light.color
+			if s.sky_night_mode {
+				light_color = {light.color.x * 0.08, light.color.y * 0.08, light.color.z * 0.12}
+			}
+			rl.SetShaderValue(s.instanced_shader, inst_light.enabled_loc, &enabled, .INT)
+			rl.SetShaderValue(s.instanced_shader, inst_light.type_loc, &type_val, .INT)
+			rl.SetShaderValue(s.instanced_shader, inst_light.position_loc, &light.position, .VEC3)
+			rl.SetShaderValue(s.instanced_shader, inst_light.target_loc, &light.target, .VEC3)
+			rl.SetShaderValue(s.instanced_shader, inst_light.color_loc, &light_color, .VEC3)
+		}
+	}
+
+	// Bind shadow map (both shaders)
 	shadow_enabled := i32(has_shadow ? 1 : 0)
 	rl.SetShaderValue(s.shader, s.shadow_enabled_loc, &shadow_enabled, .INT)
+	if s.instanced_shader.id != 0 {
+		rl.SetShaderValue(s.instanced_shader, s.inst_shadow_enabled_loc, &shadow_enabled, .INT)
+	}
 	if has_shadow {
 		shadow_idx := i32(shadow_light_idx)
 		shadow_res := s.shadow.size
 		rl.SetShaderValue(s.shader, s.shadow_light_idx_loc, &shadow_idx, .INT)
 		rl.SetShaderValue(s.shader, s.shadow_map_res_loc, &shadow_res, .INT)
 		shadow_bind(&s.shadow, s.shader)
+		if s.instanced_shader.id != 0 {
+			rl.SetShaderValue(s.instanced_shader, s.inst_shadow_light_idx_loc, &shadow_idx, .INT)
+			rl.SetShaderValue(s.instanced_shader, s.inst_shadow_map_res_loc, &shadow_res, .INT)
+			shadow_bind(&s.shadow, s.instanced_shader)
+		}
 	}
 
 	rl.BeginMode3D(cam.rl_cam)
+
+	// Extract frustum planes from the active VP matrix (must be after BeginMode3D)
+	color_frustum := frustum_from_matrices()
 
 	// Sky sphere — drawn first, at camera position, no depth write
 	if s.sky_shader.id != 0 {
@@ -643,7 +931,7 @@ scene3d_render :: proc(
 
 	// Disable blending for geometry — alpha carries Grafel resolution data
 	rlgl.DisableColorBlend()
-	scene3d_draw_geometry(s, models, time, true, draw_fn, cam)
+	scene3d_draw_geometry(s, models, time, true, draw_fn, cam, 0, &color_frustum)
 	rlgl.EnableColorBlend()
 
 	// Light indicator spheres (drawn after geometry, unaffected by shadow)

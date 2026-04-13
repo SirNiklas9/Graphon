@@ -39,6 +39,71 @@ main :: proc() {
 	defer grf_loaded_scene_destroy(&loaded)
 	scene := &loaded.scene
 
+	// --- 100K cube stress test ---
+	// 47x47x46 = 101,614 cubes in a cube-of-cubes arrangement
+	CUBE_GRID :: 47
+	CUBE_LAYERS :: 46
+	CUBE_SPACING :: f32(1.2)
+	CUBE_SIZE :: f32(0.8)
+	stress_cube_mesh := rl.GenMeshCube(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE)
+	stress_cube_model := rl.LoadModelFromMesh(stress_cube_mesh)
+	defer rl.UnloadModel(stress_cube_model)
+
+	// Compute bounding radius
+	cube_bounds := CUBE_SIZE * 0.5 * math.sqrt(f32(3.0))
+
+	// Center the grid around origin
+	half_x := f32(CUBE_GRID - 1) * CUBE_SPACING * 0.5
+	half_y := f32(CUBE_LAYERS - 1) * CUBE_SPACING * 0.5
+	half_z := f32(CUBE_GRID - 1) * CUBE_SPACING * 0.5
+
+	cube_count := 0
+	for ly in 0 ..< CUBE_LAYERS {
+		for gz in 0 ..< CUBE_GRID {
+			for gx in 0 ..< CUBE_GRID {
+				pos := rl.Vector3{
+					f32(gx) * CUBE_SPACING - half_x,
+					f32(ly) * CUBE_SPACING - half_y + 30, // float above ground
+					f32(gz) * CUBE_SPACING - half_z,
+				}
+				// Palette of 8 colors — keeps instance batches large
+				palette := [8]rl.Color{
+					{230, 80, 80, 255},   // red
+					{80, 200, 80, 255},   // green
+					{80, 120, 230, 255},  // blue
+					{230, 200, 60, 255},  // yellow
+					{200, 100, 220, 255}, // purple
+					{60, 200, 200, 255},  // cyan
+					{230, 140, 50, 255},  // orange
+					{200, 200, 200, 255}, // white
+				}
+				color_idx := (gx + gz * 3 + ly * 7) % 8
+				r := palette[color_idx].r
+				g := palette[color_idx].g
+				b := palette[color_idx].b
+
+				append(&scene.objects, Scene3DObject{
+					model             = stress_cube_model,
+					loaded            = true,
+					position          = pos,
+					scale             = 1.0,
+					tint              = {r, g, b, 255},
+					specular          = 0.4,
+					roughness         = 0.6,
+					bounds_radius     = cube_bounds,
+					grafel_resolution = 1.0,
+					parent            = -1,
+					local_scale       = 1.0,
+				})
+				cube_count += 1
+			}
+		}
+	}
+	rl.TraceLog(.INFO, "Stress test: spawned %d cubes", i32(cube_count))
+
+	// Pull camera back to see the whole thing
+	scene.camera = camera_create({0, 30, 80}, {0, 30, 0})
+
 	// Orbit light index (second light in the .grf)
 	orbit_light_idx := 1
 

@@ -63,7 +63,7 @@ config_default :: proc() -> Config {
 
 		render_scale    = 1.0,
 
-		shadow_map_size = 2048,
+		shadow_map_size = 4096,
 		shadow_radius   = 15,
 
 		bloom_intensity = 0.5,
@@ -71,9 +71,9 @@ config_default :: proc() -> Config {
 
 		sky_enabled     = true,
 
-		edge_threshold     = 0.25,
-		density_thresholds = {0.7, 0.45, 0.20, 0.05},
-		density_bg_factor  = 0.7,
+		edge_threshold     = 0.12,
+		density_thresholds = {0.75, 0.50, 0.25, 0.08},
+		density_bg_factor  = 0.55,
 
 		fps_cap         = 0,
 		vsync           = false,
