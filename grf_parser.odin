@@ -30,7 +30,7 @@ grf_parse_color :: proc(s: string) -> rl.Color {
 	return {u8(clamp(r, 0, 255)), u8(clamp(g, 0, 255)), u8(clamp(b, 0, 255)), 255}
 }
 
-grf_grf_parse_color_vec3 :: proc(s: string) -> rl.Vector3 {
+grf_parse_color_vec3 :: proc(s: string) -> rl.Vector3 {
 	parts := strings.split(s, ",")
 	defer delete(parts)
 	if len(parts) != 3 do return {1, 1, 1}
@@ -368,7 +368,7 @@ parse_scene_line :: proc(line: string, scene: ^GrfScene) {
 	case "fog":
 		parse_fog(rest, scene)
 	case "ambient":
-		scene.ambient = grf_grf_parse_color_vec3(rest)
+		scene.ambient = grf_parse_color_vec3(rest)
 	}
 }
 
@@ -440,7 +440,7 @@ parse_light :: proc(val: string, scene: ^GrfScene) {
 		if strings.has_prefix(t, "target:") {
 			light.target = grf_parse_vec3(t[7:])
 		} else if strings.has_prefix(t, "color:") {
-			light.color = grf_grf_parse_color_vec3(t[6:])
+			light.color = grf_parse_color_vec3(t[6:])
 		}
 	}
 
@@ -464,7 +464,7 @@ parse_volume :: proc(val: string, scene: ^GrfScene) {
 	for token in tokens[2:] {
 		t := strings.trim_space(token)
 		if strings.has_prefix(t, "color:") {
-			vol.color = grf_grf_parse_color_vec3(t[6:])
+			vol.color = grf_parse_color_vec3(t[6:])
 		} else if strings.has_prefix(t, "density:") {
 			vol.density = grf_parse_float(t[8:])
 		}
@@ -481,7 +481,7 @@ parse_fog :: proc(val: string, scene: ^GrfScene) {
 	for token in tokens {
 		t := strings.trim_space(token)
 		if strings.has_prefix(t, "color:") {
-			scene.fog_color = grf_grf_parse_color_vec3(t[6:])
+			scene.fog_color = grf_parse_color_vec3(t[6:])
 		} else if strings.has_prefix(t, "start:") {
 			scene.fog_start = grf_parse_float(t[6:])
 		} else if strings.has_prefix(t, "end:") {
