@@ -10,6 +10,10 @@
 *.obj
 *.pdb
 *.lib
+*.a
+
+# Runtime-generated scene dump
+scene.grf
 
 # Screenshots (generated at runtime)
 screenshot*.png
