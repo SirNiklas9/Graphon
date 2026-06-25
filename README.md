@@ -14,7 +14,6 @@ The renderer is not a post-process ASCII filter. Grafels ARE the rendering pipel
 - **Shadow mapping** — 4096x4096 depth buffer, 9x9 PCF, front-face culling
 - **Specular** — Blinn-Phong with surface-aware masking
 - **Normal mapping** — TBN matrix infrastructure
-- **SSAO** — float32 depth texture, gradient-aware sampling
 - **ACES tone mapping** + gamma correction (linear workflow)
 - **Distance fog** — configurable start/end/color
 - **Atmospheric skybox** — procedural sphere with Rayleigh-like scattering
@@ -30,7 +29,7 @@ The renderer is not a post-process ASCII filter. Grafels ARE the rendering pipel
 
 - **Odin** — language
 - **Raylib** — windowing, GPU, input, model loading
-- **GLSL 330** — custom shaders (lighting, shadows, SSAO, sky, Graphon conversion)
+- **GLSL 330** — custom shaders (lighting, shadows, sky, Graphon conversion)
 
 ## Build
 
