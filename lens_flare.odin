@@ -9,11 +9,19 @@ import "core:math/linalg"
 GL_DEPTH_COMPONENT :: 0x1902
 GL_FLOAT           :: 0x1406
 
-foreign import opengl32 "system:opengl32.lib"
+when ODIN_OS == .Windows {
+	foreign import opengl "system:opengl32.lib"
 
-@(default_calling_convention = "stdcall")
-foreign opengl32 {
-	glReadPixels :: proc(x, y, width, height: i32, format, type: u32, pixels: rawptr) ---
+	@(default_calling_convention = "stdcall")
+	foreign opengl {
+		glReadPixels :: proc(x, y, width, height: i32, format, type: u32, pixels: rawptr) ---
+	}
+} else when ODIN_OS == .Linux {
+	foreign import opengl "system:GL"
+
+	foreign opengl {
+		glReadPixels :: proc(x, y, width, height: i32, format, type: u32, pixels: rawptr) ---
+	}
 }
 
 // Ghost element — positioned along the line from light source through screen center

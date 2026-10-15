@@ -35,10 +35,12 @@ The renderer is not a post-process ASCII filter. Grafels ARE the rendering pipel
 ## Build
 
 ```
-odin build . -out:graphon.exe -collection:lib=lib
+odin build . -out:graphon -collection:lib=lib
 ```
 
-Requires: Odin compiler, MSVC Build Tools, JetBrains Mono NF font in `assets/`.
+Requires the Odin compiler, a native C/graphics toolchain, and the JetBrains
+Mono NF font in `assets/`. Windows builds use MSVC and the Windows SDK; Linux
+builds use Clang plus the X11, OpenGL, and ALSA development libraries.
 
 ## License
 

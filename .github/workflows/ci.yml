@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Odin build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Linux graphics toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang \
+            libasound2-dev \
+            libgl1-mesa-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxrandr-dev
+      - name: Install verified Odin compiler
+        shell: bash
+        run: |
+          curl --fail --location --silent --show-error \
+            https://github.com/odin-lang/Odin/releases/download/dev-2026-09/odin-linux-amd64-dev-2026-09.tar.gz \
+            --output "$RUNNER_TEMP/odin.tar.gz"
+          echo "167c3e1d7056419dad2e04bb3bd98715b7ff286d4c125f3c5a5ee337c6254283  $RUNNER_TEMP/odin.tar.gz" | sha256sum --check --strict
+          mkdir "$RUNNER_TEMP/odin"
+          tar -xzf "$RUNNER_TEMP/odin.tar.gz" -C "$RUNNER_TEMP/odin" --strip-components=1
+          echo "$RUNNER_TEMP/odin" >> "$GITHUB_PATH"
+      - name: Check packages
+        run: odin check . -collection:lib=lib
+      - name: Build Graphon
+        run: odin build . -out:graphon -collection:lib=lib
