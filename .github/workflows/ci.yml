@@ -12,23 +12,23 @@ permissions:
 jobs:
   build:
     name: Odin build
-    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, sirniklas-local]
     timeout-minutes: 20
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install Linux graphics toolchain
+      - name: Verify Linux graphics toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang \
-            libasound2-dev \
-            libgl1-mesa-dev \
-            libx11-dev \
-            libxcursor-dev \
-            libxi-dev \
-            libxinerama-dev \
-            libxrandr-dev
+          command -v clang
+          command -v pkg-config
+          pkg-config --exists alsa
+          pkg-config --exists gl
+          pkg-config --exists x11
+          pkg-config --exists xcursor
+          pkg-config --exists xi
+          pkg-config --exists xinerama
+          pkg-config --exists xrandr
       - name: Install verified Odin compiler
         shell: bash
         run: |
